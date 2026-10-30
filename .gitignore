@@ -1,0 +1,13 @@
+# Node tooling
+node_modules/
+npm-debug.log*
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Installer backups (should never appear in the repo, but just in case)
+*.bak
+*.bak.*
