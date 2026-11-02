@@ -65,12 +65,26 @@ const SECRET_PATTERNS = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Case-exact path existence (catches case mismatches that Windows would hide). */
-function existsExactCase(target) {
-  const parsed = path.parse(target);
-  let current = parsed.root;
-  const segments = path.relative(parsed.root, target).split(path.sep).filter(Boolean);
-  for (const segment of segments) {
+/**
+ * Case-exact path existence, used to catch case mismatches that Windows would
+ * hide but Linux/macOS installs would break on.
+ *
+ * Only segments inside `trustedRoot` are compared exactly: environment-supplied
+ * paths (temp directories, drive letters, junctions) may spell a directory
+ * differently from its on-disk entry on case-insensitive filesystems, and that
+ * is not a repository defect. Paths outside the trusted root fall back to plain
+ * existence checks.
+ */
+function existsExactCase(target, trustedRoot) {
+  const t = path.resolve(target);
+  const r = path.resolve(trustedRoot);
+  if (t === r) return fs.existsSync(r);
+  const rel = path.relative(r, t);
+  const inside = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  if (!inside) return fs.existsSync(t);
+  if (!fs.existsSync(r)) return false;
+  let current = r;
+  for (const segment of rel.split(path.sep)) {
     let entries;
     try {
       entries = fs.readdirSync(current);
@@ -148,7 +162,7 @@ function validateRepo(root) {
   // -- Required files -------------------------------------------------------
   for (const rel of REQUIRED_FILES) {
     const full = path.join(root, rel);
-    const ok = existsExactCase(full);
+    const ok = existsExactCase(full, root);
     push(`structure:${rel}`, ok, ok ? rel : `missing: ${rel}`);
   }
 
@@ -210,9 +224,9 @@ function validateRepo(root) {
         missingStages.length === 0 ? 'STAGE 0-8 present' : `missing stage headings: ${missingStages.join(', ')}`,
       );
       const refTokens = [...new Set(fm.body.match(/references\/[A-Za-z0-9._-]+\.md/g) ?? [])];
-      const missingRefs = refTokens.filter((t) => !existsExactCase(path.join(path.dirname(skillPath), t)));
+      const missingRefs = refTokens.filter((t) => !existsExactCase(path.join(path.dirname(skillPath), t), root));
       const requiredMissing = REQUIRED_SKILL_REFERENCES.filter(
-        (f) => !existsExactCase(path.join(path.dirname(skillPath), 'references', f)),
+        (f) => !existsExactCase(path.join(path.dirname(skillPath), 'references', f), root),
       );
       const refsOk = missingRefs.length === 0 && requiredMissing.length === 0;
       push(
@@ -240,7 +254,7 @@ function validateRepo(root) {
     const broken = [];
     for (const target of localLinkTargets(text)) {
       const resolved = path.resolve(path.dirname(file), target);
-      if (!existsExactCase(resolved)) broken.push(target);
+      if (!existsExactCase(resolved, root)) broken.push(target);
     }
     const rel = path.relative(root, file).split(path.sep).join('/');
     push(`links:${rel}`, broken.length === 0, broken.length === 0 ? 'all local links resolve' : `broken: ${broken.join(', ')}`);
@@ -525,6 +539,30 @@ function runSelfTest(root) {
   });
   fs.rmSync(baseline, { recursive: true, force: true });
 
+  // Regression probe for a CI-only defect: exact-case checks must not fail when
+  // the environment spells the trusted root differently from its on-disk entry
+  // (observed on a Windows runner whose TEMP casing differs from the directory
+  // entries). The probe only runs where the filesystem is case-insensitive.
+  const probeDir = fs.mkdtempSync(path.join(baseTmp, 'caseprobe-'));
+  fs.writeFileSync(path.join(probeDir, 'probe.md'), 'probe');
+  const reCasedRoot = probeDir.toUpperCase();
+  if (fs.existsSync(reCasedRoot)) {
+    const ok = existsExactCase(path.join(reCasedRoot, 'probe.md'), reCasedRoot);
+    results.push({
+      id: 'selftest:exact-case-tolerates-environment-spelling',
+      ok,
+      detail: ok ? 'anchored check passes with a re-cased root' : 'FAILED: exact-case check broke for a re-cased environment root (CI bug regression)',
+    });
+  } else {
+    results.push({
+      id: 'selftest:exact-case-tolerates-environment-spelling',
+      ok: true,
+      skipped: true,
+      detail: 'case-sensitive filesystem; environment re-casing not applicable',
+    });
+  }
+  fs.rmSync(probeDir, { recursive: true, force: true });
+
   for (const mutation of mutations) {
     const copy = copyRepoToTemp(root, baseTmp);
     try {
@@ -533,12 +571,17 @@ function runSelfTest(root) {
       } else {
         const target = path.join(copy, mutation.file);
         const text = fs.readFileSync(target, 'utf8');
-        const mutated = mutation.apply(text);
-        if (mutated === text) {
+        // Normalize to LF before mutating, then restore the file's own line
+        // endings: runner checkouts may be CRLF while mutation patterns are
+        // written against LF text.
+        const eol = text.includes('\r\n') ? '\r\n' : '\n';
+        const lfText = text.replace(/\r\n/g, '\n');
+        const mutated = mutation.apply(lfText);
+        if (mutated === lfText) {
           results.push({ id: `selftest:${mutation.id}`, ok: false, detail: 'mutation had no effect - test is broken' });
           continue;
         }
-        fs.writeFileSync(target, mutated);
+        fs.writeFileSync(target, eol === '\n' ? mutated : mutated.replace(/\n/g, '\r\n'));
       }
       const failures = validateRepo(copy).filter((r) => !r.ok && !r.skipped);
       const detected = failures.some((f) => f.id === mutation.expect || f.id.startsWith(`${mutation.expect}:`));
