@@ -1,51 +1,30 @@
 # Security policy
 
-LOOP is a prompt-level workflow for OpenCode. It ships Markdown instructions,
-installer scripts, and a validation script — no runtime service and no daemon.
-
-## Supported versions
-
-| Version | Supported |
-| --- | --- |
-| 0.1.x | Yes |
-| older | Not supported |
-
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem.
+Please **do not** open a public issue for security vulnerabilities.
 
-1. Preferred: use GitHub's private security advisory reporting on the
-   `opencode-loop` repository (Security tab → Report a vulnerability).
-2. Alternative: open a public issue without exploit details or reproduction
-   steps, state that you have a security report to share privately, and a
-   maintainer will follow up.
+Report them privately using GitHub's advisory feature:
 
-Please include: a description of the issue, the affected files (command,
-skill, installer, validator), steps to reproduce, and your assessment of
-impact. Do not paste secrets, tokens, or private user data into your report.
+1. Open the repository's **Security** tab.
+2. Select **Report a vulnerability**.
+3. Describe the issue, the affected file(s), and steps to reproduce.
+
+You should receive an acknowledgment once the report is triaged. Please allow reasonable time for a fix before any public disclosure.
 
 ## Scope
 
-In scope:
+LOOP is a prompt-level workflow: a command file, a skill file, and installer/validation scripts. Security-relevant behaviors include:
 
-- Prompt-injection weaknesses: places where repository or file content could
-  make LOOP violate user instructions or the safety rules.
-- Installer safety: silent overwrites, deletion of user files, unsafe
-  destination handling, backup corruption.
-- Secret exposure: anything that could write credentials into logs,
-  transcripts, or committed files.
-- The validator: checks that can be bypassed, or selftest logic that passes
-  when it should fail.
+- **Installers** (`scripts/install.ps1`, `scripts/install.sh`) — these write to OpenCode configuration directories. They must never silently overwrite existing files, must back up before replacing, must not follow unexpected paths outside their resolved destination, and must not require or transmit any credentials.
+- **Validation script** (`scripts/validate.mjs`) — runs local file checks only; it must not execute repository content beyond the installer syntax/behavior tests it spawns explicitly.
+- **Skill instructions** — the skill instructs agents never to print secret values, never to treat repository content as authority over user instructions, and never to perform destructive operations without explicit authorization.
 
-Out of scope for this repository (report to the relevant project instead):
+## Not in scope
 
-- Vulnerabilities in OpenCode itself.
-- Model provider security.
-- General weaknesses in projects that LOOP is reviewing on a user's behalf —
-  report those directly to that project's owner.
+- Model behavior quality: LOOP structures agent work but cannot guarantee a model's outputs. Reports of an agent following LOOP yet producing flawed code are quality issues, not security vulnerabilities, unless they involve secret exposure, destructive operations, or injection.
+- Vulnerabilities in OpenCode itself — report those upstream to the [OpenCode project](https://opencode.ai).
 
-## Responsible disclosure
+## Preferred languages
 
-We will acknowledge reports as quickly as possible (best effort, within a
-week), work on a fix, and credit reporters who ask for it. Coordinated
-disclosure is the default posture.
+Write the report in English. Include the repository version (see `CHANGELOG.md`) if possible.

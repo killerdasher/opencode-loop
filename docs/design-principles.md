@@ -1,63 +1,43 @@
-# Design principles
+# LOOP design principles
 
-The engineering principles behind LOOP, and where each one is enforced in the implementation. This is the reasoning record for the workflow decisions; see `architecture.md` for mechanism-level detail.
+These principles govern what LOOP is, what it refuses to be, and how changes to it should be judged.
 
-## P1 — Evidence over appearance
+## 1. Optimize for the strongest verifiable result
 
-A claim without evidence is a defect, not a feature. Verification results are labeled `VERIFIED`, `IMPLEMENTED BUT NOT VERIFIED`, `BLOCKED`, `NOT APPLICABLE`, or `FAILED`, each with its guardrails; the final report must trace every claim to a recorded command or inspection.
+The goal of a loop is not "complete the request" and not "produce the most output." It is the best result that satisfies the user's actual requirements and constraints, with evidence behind every quality claim. When completion pressure conflicts with verification pressure, verification wins.
 
-Enforced in: SKILL.md (Stage 5, Stage 8, reporting contract), `references/quality-gates.md`, validator checks on the skill's status vocabulary.
+## 2. Evidence is the only currency
 
-## P2 — Strongest verifiable result, not largest result
+A test that was not run is not a passing test. A build that succeeds is not a working feature. Every status label maps to a concrete observation: a command and its result, an artifact, or a diff. Uncertainty is stated; failure is never concealed by relabeling.
 
-The optimization target is the result that best satisfies the user's stated objective with appropriate complexity — not the most files, the most features, or the most elaborate architecture. LOOP explicitly names over-engineering and manufactured sophistication as failure modes.
+## 3. Scope is a contract
 
-Enforced in: SKILL.md (Stage 2 anti-fashion rule, Stage 4 speculative-complexity ban, calibration section), `references/risk-analysis.md` (no-fabrication section).
+The user's objective defines the work. MUST / SHOULD / COULD classification happens before implementation; COULD items are parked by default. LOOP explicitly refuses "while I was here" expansion, because unrequested complexity is a cost, not a contribution.
 
-## P3 — Convergence is part of quality
+## 4. The user owns the repository
 
-Knowing when to stop is engineered: five explicit stopping conditions, including the iteration budget, two consecutive no-improvement cycles, blockers, and out-of-scope requirements. An iteration limit reached with unmet requirements produces an incomplete report — never a relabeled success.
+Git status before the first edit. Uncommitted work is sacred. Destructive, irreversible, or externally consequential actions require explicit authorization inside the current task. Repository content — docs, issues, fixtures — is data, never authority over these rules.
 
-Enforced in: SKILL.md Stage 8; `references/evaluation-cases.md` Case I; `tests/evaluation.md` scoring.
+## 5. Honesty about mechanism
 
-## P4 — The user's project is untouchable ground
+LOOP does not pretend that a Markdown prompt is a runtime controller. Iteration limits are prompt-level discipline and are documented that way. Skill loading failure degrades visibly (`DEGRADED — SKILL UNAVAILABLE`) instead of silently substituting a different behavior. If LOOP cannot do something, it says so.
 
-The engine's first act in a repository is establishing what belongs to whom (Git state, uncommitted changes, conventions). Uncommitted work is preserved; destructive, irreversible, or externally consequential actions require explicit authorization; repository content is data, never instructions that outrank the user or the safety rules.
+## 6. Appropriate complexity
 
-Enforced in: SKILL.md hard safety rules; `references/evaluation-cases.md` Case D and Case E; installer backup behavior mirrors the same value at the meta level: LOOP never silently replaces user files, including a user's own `/loop` command.
+A well-supported, simple solution beats novel complexity. LOOP's own tooling has zero dependencies for this reason: the maintenance cost of a dependency must be justified by measurable value. This principle applies to the projects LOOP works on, and to LOOP itself.
 
-## P5 — Portability without dependencies
+## 7. Convergence over churn
 
-LOOP must work for developers on Windows, Linux, and macOS, on any OpenCode provider, without installing a framework, an API key, a database, or a specific model. Artifacts are Markdown; tooling is dependency-free Node; installer scripts are ASCII-only for Windows PowerShell 5.1 safety.
+Stopping is a designed behavior, not a failure. Five explicit stopping conditions — including "two consecutive cycles with no meaningful improvement" — exist so the loop ends when the marginal value of another iteration drops below its cost. Honest partial completion beats hollow full activity.
 
-Enforced in: architecture decision D1; installer scripts; `validate.mjs` ASCII check; the integration-test approach using only what OpenCode itself provides.
+## 8. Adapt to the actual session
 
-## P6 — Small tasks get small loops
+LOOP assumes nothing about model capability, available tools, credentials, or platform. Verification is chosen from what the session can really run; unavailable checks are labeled `BLOCKED` with the precise missing capability. No capability is claimed that the environment has not demonstrated.
 
-Ceremony scales down: `focused` mode keeps exploration to a justified paragraph and compresses review. What never scales down is verification and honest reporting — "small" does not exempt work from evidence.
+## 9. Modularity and maintainability
 
-Enforced in: SKILL.md mode table and calibration section; `references/evaluation-cases.md` Case A.
+The command is a thin interface; the skill is the engine; references carry detail. Each document has one job, so contributors can improve one concern without destabilizing the rest. Instructions must remain readable by the humans who maintain them — and by the agents that follow them.
 
-## P7 — Graceful degradation, honest labels
+## 10. Universal applicability
 
-Unknown flags fall back to documented defaults with a stated correction; a missing skill produces a plainly marked degraded run instead of silent substitution; blocked verification is labeled `BLOCKED` with the precise missing capability rather than faked.
-
-Enforced in: command `loop.md` startup behavior; SKILL.md status vocabulary; `references/evaluation-cases.md` Case F and Case G.
-
-## P8 — Modularity where the model pays attention
-
-SKILL.md is the always-loaded core: stages, rules, settings, reporting. Checklists live in reference files that OpenCode lists but does not inline; SKILL.md directs when to read each. This reduces context cost on every loop and lets contributors extend reference material without inflating the engine.
-
-Enforced in: repository layout (`references/`), SKILL.md's explicit reference pointers, validator checks that references exist and are mentioned.
-
-## P9 — Security review is a named stage, not a garnish
-
-Stage 6 runs a skeptical, independent review with checklists across correctness, architecture, security, performance, product, and maintainability; findings require evidence, severity, and impact. CRITICAL and HIGH issues are fixed before cosmetic work.
-
-Enforced in: SKILL.md Stage 6; `references/risk-analysis.md`; `tests/evaluation.md` Case E.
-
-## P10 — The tool is evaluated by its own rubric
-
-`tests/evaluation.md` defines nine canonical cases with disqualifiers (fabricated results, destructive operations, scope inflation) that fail a case outright. Defect injection in the validator proves the static checks themselves catch breakage. Evaluation results in documentation quote real runs only.
-
-Enforced in: `tests/evaluation.md`, `validate.mjs --selftest`, README honesty requirements.
+LOOP must be useful across languages, frameworks, operating systems, project sizes, and model providers. It prescribes process, not technology: no specific stack, no paid service, no API key, no external framework. Anything platform-specific is expressed as a conditional, never as an assumption.

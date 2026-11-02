@@ -1,13 +1,23 @@
-# Node tooling
-node_modules/
-npm-debug.log*
-*.log
-
-# OS junk
+# OS
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Installer backups (should never appear in the repo, but just in case)
-*.bak
-*.bak.*
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Dependencies (this project intentionally has none)
+node_modules/
+
+# Logs and local env
+*.log
+.env
+.env.*
+
+# Installer backups (created next to replaced files)
+*.backup-*
+
+# Test scratch space
+tmp/

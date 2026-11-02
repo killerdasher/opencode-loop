@@ -1,0 +1,4 @@
+# Normalize line endings: LF in the repository for everything that must run
+# cross-platform, so a Windows clone (autocrlf) cannot break shell scripts.
+* text=auto
+*.sh text eol=lf

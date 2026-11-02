@@ -4,7 +4,7 @@ Reference for the LOOP engine. Use this file when constructing the Stage 8 conve
 
 ## Purpose
 
-Quality is judged by evidence, not by scores or optimism. Gates exist to force an explicit, false-signal-free decision: what is done, how you know, what is not. Do not present an arbitrary 100/100 or "98% quality" number as proof of anything.
+Quality is judged by evidence, not by scores or optimism. Gates exist to force an explicit, false-signal-free decision: what is done, how you know, what is not. Never present an arbitrary 100/100 score or "98% quality" number as proof of anything.
 
 ## Status vocabulary (mandatory)
 
@@ -20,25 +20,25 @@ Never upgrade a label without new evidence. Never downgrade a problem by reclass
 
 ## Quality-gate dimensions
 
-Use the dimensions relevant to the project; record status plus an evidence pointer for each.
+Assess the dimensions relevant to the project; record a status plus an evidence pointer for each. A project does not need every possible dimension satisfied to be complete - it needs the ones that matter for this objective.
 
 | Dimension | Typical evidence |
 | --- | --- |
 | Functional correctness | Passing tests tied to named requirements; reproduction scripts |
-| Architecture | Consistent structure; dependency direction notes; interface review |
+| Architecture | Consistent structure; dependency-direction notes; interface review |
 | Security | Input-validation checks; secret scan of new files; dependency audit; authorization tests |
 | Reliability | Error-path tests; timeout coverage; recovery from partial failure |
-| Performance | Measured profile or benchmark with environment stated — only when performance is a real requirement |
+| Performance | Measured profile or benchmark with environment stated - only when performance is a real requirement |
 | Maintainability | Documentation consistency; naming; test coverage of changed areas |
 | User experience / accessibility | Flow review; missing-state coverage; accessibility checks where relevant |
-| Compatibility | Matrix run limited to platforms/versions actually tested |
+| Compatibility | Matrix limited to platforms/versions actually tested |
 | Documentation | Docs updated against changed behavior; examples executed where cheap |
 | Test coverage | Coverage statistic on changed code when tooling exists; otherwise a stated structural review |
-| Deployment readiness | Build, packaging, and configuration verified — only when shipping is part of the objective |
+| Deployment readiness | Build, packaging, and configuration verified - only when shipping is part of the objective |
 
 ## Convergence checklist (Stage 8 evidence)
 
-A loop may end only when this checklist is satisfied or the stopping condition honestly prevents it:
+A loop may end only when this checklist is satisfied or a stopping condition honestly prevents it:
 
 1. Requirement table shows every MUST satisfied (`VERIFIED` evidence) or explicitly `BLOCKED` with a user-visible reason.
 2. Verification table lists actual commands with PASS / FAIL / BLOCKED / NOT APPLICABLE statuses.
@@ -50,10 +50,11 @@ A loop may end only when this checklist is satisfied or the stopping condition h
 
 ## Reporting formats
 
-Iteration banner — emit at each iteration boundary and whenever progress is material:
+Iteration banner - emit at each iteration boundary and whenever progress is material:
 
 ```
-LOOP | ITERATION n/N — <one-line objective>
+LOOP | ITERATION n/N - <one-line objective>
+stage: <current stage name>
 changed: ...
 verified: ...
 key findings: ...
@@ -70,15 +71,21 @@ Verification table:
 | Check | Command | Status | Notes |
 | --- | --- | --- | --- |
 
+Quality-gate table (final report):
+
+| Dimension | Status | Evidence / reason |
+| --- | --- | --- |
+
 ## Final completion report template
 
-1. **Overall outcome** — complete / partially complete / blocked, in one paragraph.
-2. **Requirements table** — MUST/SHOULD/COULD with status and evidence.
-3. **What was built** — major changes, key decisions, accepted trade-offs.
-4. **Verification table** — actual commands, statuses, short notes.
-5. **Adversarial findings** — each with severity and disposition: fixed / accepted / parked / blocked.
-6. **Remaining risks and known limitations.**
-7. **Reason for stopping** — which of the five conditions applies (see SKILL.md Stage 8).
-8. **Recommended follow-ups** — only genuinely valuable ones, stated as optional.
+1. **Overall outcome** - complete / partially complete / blocked, in one paragraph.
+2. **Requirements table** - MUST/SHOULD/COULD with status and evidence.
+3. **Quality-gate table** - dimensions assessed with evidence pointers.
+4. **What was built** - major changes, key decisions, accepted trade-offs.
+5. **Verification table** - actual commands, statuses, short notes.
+6. **Adversarial findings** - each with severity and disposition: fixed / accepted / parked / blocked.
+7. **Remaining risks and known limitations.**
+8. **Reason for stopping** - which of the five stopping conditions applies (see SKILL.md Stage 8).
+9. **Recommended follow-ups** - only genuinely valuable ones, stated as optional.
 
 Keep the report factual: every claim must trace to an evidence entry. Concise reasoning summaries are welcome; never expose private chain-of-thought.

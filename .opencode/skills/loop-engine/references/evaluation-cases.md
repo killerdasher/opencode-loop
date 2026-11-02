@@ -2,32 +2,32 @@
 
 Guidance for the LOOP engine in situations that commonly distort iterative workflows. This file guides the agent in-session; the repository's `tests/evaluation.md` is the after-the-fact evaluation rubric and is intended to stay aligned with this file.
 
-## Case A — Task with small scope
+## Case A - Task with small scope
 
 A small isolated modification must remain small and become correct.
 
-- Compress Stages 2–3 into a paragraph with recorded rationale; never skip Stages 5–6. "Small" does not exempt the work from verification.
+- Compress Stages 2-3 into a paragraph with recorded rationale; never skip Stages 5-6. "Small" does not exempt the work from verification.
 - Prefer one honest iteration converging on evidence over manufactured ceremony.
 - Do not introduce architecture or abstractions that the change cannot justify.
 
-## Case B — Complex application
+## Case B - Complex application
 
 A large application requires full pipeline discipline.
 
-- Complete Stages 0–3 before implementation; record the plan before touching code.
-- Implement in coherent increments with verification after each increment — never accumulate all verification to the end.
+- Complete Stages 0-3 before implementation; record the plan before touching code.
+- Implement in coherent increments with verification after each increment - never accumulate all verification to the end.
 - Rescope deliberately when Stage 1/5/6 evidence contradicts the plan; say what changed and why.
 - Final Stage 6 covers the full dimension set, not only the last increment.
 
-## Case C — Failing tests
+## Case C - Failing tests
 
 A real test failure is an investigation, not an obstacle.
 
 - Reproduce before touching code; attribute the failure: introduced by this loop, or pre-existing?
 - Fix the root cause; rerun the failed test and relevant regression checks.
-- Never suppress, comment out, skip, or weaken a test to make it pass without explicit user authorization — that is scope inversion, not repair. Report pre-existing failures you did not fix instead of hiding them.
+- Never suppress, comment out, skip, or weaken a test to make it pass without explicit user authorization - that is scope inversion, not repair. Report pre-existing failures you did not fix instead of hiding them.
 
-## Case D — Uncommitted user changes
+## Case D - Uncommitted user changes
 
 Uncommitted work belongs to the user.
 
@@ -36,24 +36,24 @@ Uncommitted work belongs to the user.
 - Keep LOOP's own changes separable and report them distinctly from pre-existing modifications.
 - If the task is impossible without touching user changes, stop and ask before acting.
 
-## Case E — Security weakness
+## Case E - Security weakness
 
 Security findings are prioritized, not merely noted.
 
 - Establish evidence: reproduce or cite the concrete mechanism (file:line).
 - Fix at the root cause, not the symptom; add or verify a regression test for the weakness.
-- Verify remediation explicitly and state verified scope. Do not claim "secure" — claim what was tested.
+- Verify remediation explicitly and state verified scope. Do not claim "secure" - claim what was tested.
 - Do not manufacture findings; do not publish exploit details in reports or logs beyond what is needed to fix the issue.
 
-## Case F — Ambiguous task
+## Case F - Ambiguous task
 
 Ambiguity is resolved by safe inference, then by minimal clarification.
 
 - Record all Stage 0 assumptions explicitly; prefer defaults the user can correct cheaply.
-- Ask only when a decision is essential and unsafe to default — e.g., destructive operations, external accounts, major scope.
+- Ask only when a decision is essential and unsafe to default - e.g., destructive operations, external accounts, major scope.
 - Continue with reasonable defaults while awaiting an answer; do not stall unnecessarily.
 
-## Case G — Impossible verification
+## Case G - Impossible verification
 
 Blocked verification is reported, never simulated.
 
@@ -62,7 +62,7 @@ Blocked verification is reported, never simulated.
 - Tell the user exactly what to run or provide to complete verification.
 - Never fabricate a PASS result. A `BLOCKED` label is correct behavior, not failure of the loop.
 
-## Case H — Scope expansion pressure
+## Case H - Scope expansion pressure
 
 The user's objective is the boundary.
 
@@ -70,7 +70,7 @@ The user's objective is the boundary.
 - Implement COULD only when cheap, within the user's scope, and clearly valuable; otherwise report them as parked recommendations.
 - "It would be nice" is not authorized work; do not expand the deliverable to look impressive.
 
-## Case I — Diminishing returns
+## Case I - Diminishing returns
 
 Cosmetic deltas are converged away, not chased.
 

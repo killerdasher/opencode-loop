@@ -1,4 +1,4 @@
-# Adversarial review — risk analysis
+# Adversarial review - risk analysis
 
 Reference for the LOOP engine's Stage 6. Take the position of a senior reviewer who did not author the code: assume nothing works, including your own earlier work, unless you have just verified it.
 
