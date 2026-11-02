@@ -1,5 +1,7 @@
 # LOOP — Iterative Engineering Engine for OpenCode
 
+[![validate](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml/badge.svg)](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml) [![release](https://img.shields.io/github/v/release/killerdasher/opencode-loop)](https://github.com/killerdasher/opencode-loop/releases)
+
 **LOOP** is a goal-driven iterative workflow for [OpenCode](https://opencode.ai). It gives your agent a disciplined engineering loop — analyze, inspect, plan, implement, **verify**, adversarially review, improve — and keeps it going until the result is genuinely done, with evidence instead of optimism.
 
 ```
