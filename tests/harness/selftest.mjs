@@ -126,6 +126,20 @@ function main() {
     }
   }
 
+  // 2b. Command runner regressions (found by the ubuntu CI run of 2026-11-03:
+  //     shell:false on POSIX execs the whole command string as a filename).
+  {
+    const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-runner-probe-'));
+    // A multi-word command string must actually run on every platform.
+    const ran = runFixtureTest({ testCommand: `"${process.execPath}" -e "process.exit(0)"`, dir: probeDir });
+    check('runner:string-command-executes', ran.status === 'PASS', `status ${ran.status}: ${ran.output.slice(0, 120)}`);
+    // A missing command is an infrastructure ERROR, never a suite FAIL:
+    // otherwise a seeded-failure fixture could pass on a broken machine.
+    const missing = runFixtureTest({ testCommand: 'loop-runner-probe-definitely-missing', dir: probeDir });
+    check('runner:missing-command-is-error', missing.status === 'ERROR', `status ${missing.status}: ${missing.output.slice(0, 120)}`);
+    fs.rmSync(probeDir, { recursive: true, force: true });
+  }
+
   // ---------------------------------------------------------------------
   // 3. The real CLI builds every fixture too (wiring test, still free)
   // ---------------------------------------------------------------------

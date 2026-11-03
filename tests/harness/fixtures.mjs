@@ -369,11 +369,46 @@ export function hashUserFiles(fixture) {
 /** Run a fixture's own test command; returns {status, output}. */
 export function runFixtureTest(fixture) {
   if (!fixture.testCommand) return { status: 'NOT_CONFIGURED', output: 'no fixed test command for this case' };
-  const isWindows = IS_WINDOWS;
+
+  // Pre-flight: is the command's executable actually present? With shell:true,
+  // a missing command surfaces differently per platform (POSIX: exit 127,
+  // Windows cmd: exit 1 with a message) - probing the executable directly makes
+  // "broken environment" (ERROR) reliably distinct from "suite is red" (FAIL),
+  // so a machine without `node` can never masquerade as a passing seeded-failure
+  // fixture. Command strings come from fixtures (trusted repo content) only.
+  const first = String(fixture.testCommand).trim();
+  const exe = (() => {
+    const quoted = /^"([^"]+)"|^'([^']+)'/.exec(first);
+    if (quoted) return quoted[1] || quoted[2];
+    return first.split(/\s+/)[0];
+  })();
+  const looksLikePath = /[\\/]/.test(exe);
+  let exeFound;
+  if (looksLikePath) {
+    // Absolute or relative path: no shell probe needed (and none is safe here).
+    const full = path.isAbsolute(exe) ? exe : path.join(fixture.dir, exe);
+    exeFound = fs.existsSync(full);
+  } else if (IS_WINDOWS) {
+    exeFound = spawnSync('where', [exe], { encoding: 'utf8', shell: false }).status === 0;
+  } else {
+    // `command -v` is a shell builtin, not an executable: run it via sh.
+    // No `--` flag: POSIX does not mandate one for `command`, and ubuntu's
+    // /bin/sh (dash) is the platform this probe exists to protect.
+    exeFound = spawnSync('sh', ['-c', 'command -v "$1"', 'probe', exe],
+      { encoding: 'utf8', shell: false }).status === 0;
+  }
+  if (!exeFound) {
+    return { status: 'ERROR', output: `command not found: ${exe}` };
+  }
+
+  // testCommand is a single command string (e.g. "node test/x.test.mjs") and
+  // must run through a shell on every platform: with shell:false on POSIX,
+  // spawnSync execs the whole string as one filename (ENOENT -> ERROR), which
+  // broke the ubuntu CI run of 2026-11-03 while Windows passed.
   const r = spawnSync(fixture.testCommand, {
     cwd: fixture.dir,
     encoding: 'utf8',
-    shell: isWindows, // commands like "node test/x.test.mjs" need a shell on Windows
+    shell: true,
     timeout: 60_000,
   });
   const output = `${r.stdout || ''}${r.stderr || ''}`.trim();

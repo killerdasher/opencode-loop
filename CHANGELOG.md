@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Behavioral harness on POSIX: `runFixtureTest` executed the fixture's command string with `shell: false` on non-Windows platforms, so `spawnSync` treated the whole string (`node test/x.test.mjs`) as a single filename — every seeded-state check failed with `ERROR` on ubuntu CI while Windows passed (first CI run to execute the harness self-test on Linux). Commands now run through a shell on every platform, with a pre-flight executable probe (`where` / `command -v`) so a missing executable stays an `ERROR` (broken environment) and can never be misread as a `FAIL` (red suite). Two free self-test checks guard both behaviors.
+
 ## [0.3.0] - 2026-11-03
 
 Independent engineering audit and behavioral validation.
@@ -13,7 +17,7 @@ Independent engineering audit and behavioral validation.
 ### Added
 
 - **Behavioral evaluation harness** (`tests/harness/`): semi-automated execution of evaluation Cases A–I — isolated fixture repositories (git-identity-isolated, temp-dir only), one model session per run through the officially documented `opencode run --format json` path, evidence collection (transcript, git diff, independent harness re-run of the fixture suite), and objective criteria with a four-level verdict (`PASS` / `FAIL` / `BLOCKED` / `REVIEW`, precedence FAIL > BLOCKED > REVIEW > PASS). Manual checkpoints return `REVIEW` and are adjudicated next to the evidence; the harness never auto-promotes them.
-- **Free harness self-test** (`tests/harness/selftest.mjs`, run in CI): proves fixtures build, seeded states are real (failing fixtures fail, green fixtures pass, Case G's blocker blocks), criteria can both pass and fail, and the evidence parsers hold against the pilot-run defects. 64 checks, no model calls.
+- **Free harness self-test** (`tests/harness/selftest.mjs`, run in CI): proves fixtures build, seeded states are real (failing fixtures fail, green fixtures pass, Case G's blocker blocks), criteria can both pass and fail, and the evidence parsers hold against the pilot-run defects. 66 checks, no model calls.
 - **Behavioral evaluation rubric rewrite** (`tests/evaluation.md`): per case — controlled initial conditions, test objective, observable expected/forbidden behavior, evidence, and objective PASS/FAIL/BLOCKED/REVIEW criteria mapped to harness check IDs; honest result ledger (Case A pilot executed; B–I not yet run).
 - **A/B comparison methodology** (`tests/comparison.md`): controlled protocol comparing standard OpenCode execution vs LOOP on identical tasks/snapshots/model/permissions, with metric definitions, anti-gaming reporting rules, and an explicit ledger stating **no comparative results exist yet**.
 - **ADR 0001** (`docs/adr/0001-runtime-orchestration.md`): compares skill-only, skill+plugin, and external-orchestrator architectures against official OpenCode APIs (verified); retains skill-only and records revisit triggers.
