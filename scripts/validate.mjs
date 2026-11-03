@@ -642,7 +642,10 @@ function runSelfTest(root) {
       id: 'changelog loses the current version',
       expect: 'docs:changelog-current-version',
       file: 'CHANGELOG.md',
-      apply: (t) => t.replace(/^## \[0\.2\.0\][^\n]*$/m, '## legacy'),
+      // Strip EVERY version heading beyond 0.1.0 (version-agnostic): the
+      // check must fail only when no current version is documented at all.
+      // The lookahead mirrors the check's own definition of the first release.
+      apply: (t) => t.replace(/^## \[(?!0\.1\.0\])\d+\.\d+\.\d+\][^\n]*$/gm, '## legacy'),
     },
     {
       id: 'skill loses the iteration banner',

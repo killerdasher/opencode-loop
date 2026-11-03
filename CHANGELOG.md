@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Unreleased changes for 0.3.0 — independent engineering audit and behavioral validation. **Not yet released; no version tag or GitHub release exists for these changes.**
+## [0.3.0] - 2026-11-03
+
+Independent engineering audit and behavioral validation.
 
 ### Added
 
