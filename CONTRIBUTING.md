@@ -22,11 +22,22 @@ node scripts/validate.mjs --all
 
 This runs:
 
-1. **Structural validation** — repository layout, command/skill frontmatter rules, `$ARGUMENTS` and skill-invocation requirements, STAGE 0–8 headings, reference resolution, case-exact link checking, installer behavior markers, documentation completeness, and a secret scan.
-2. **Self-test** — proves the validator still catches 11 classes of deliberately broken files. If you change the validator, add a mutation for every new check you add.
+1. **Structural validation** — repository layout, command/skill frontmatter rules, `$ARGUMENTS` and skill-invocation requirements, STAGE 0–8 headings, reference resolution, case-exact link checking, installer behavior markers, documentation completeness, evaluation-framework alignment, the reporting contract (banner, `SETTINGS:`, status vocabulary), and a secret scan.
+2. **Self-test** — proves the validator still catches 19 classes of deliberately broken files. If you change the validator, add a mutation for every new check you add.
 3. **Installer tests** — both installers against temporary directories (never the real OpenCode config): fresh install, idempotency, overwrite refusal, overwrite-with-backup, dry-run, project scope, uninstall.
 
-CI runs the same three commands on Linux and Windows for every push and pull request.
+Then run the behavioral harness self-test (free — no model calls, no network):
+
+```sh
+node tests/harness/selftest.mjs
+```
+
+It proves the fixtures build, the seeded states are real, the criteria can
+both pass and fail, and the evidence parsers hold against the defects found in
+the pilot runs. Behavioral *runs* (`run-case.mjs`) cost model tokens and are
+never part of CI.
+
+CI runs the validator commands plus the harness self-test on Linux and Windows for every push and pull request.
 
 ## Making changes
 
@@ -49,6 +60,15 @@ CI runs the same three commands on Linux and Windows for every push and pull req
 - Zero dependencies. Node built-ins only.
 - Every new check needs a self-test mutation that proves it can fail.
 - Checks that need an external runtime must degrade to `SKIP`, never to a false `PASS` or a spurious failure.
+
+### To the behavioral harness (`tests/harness/`)
+
+- Zero dependencies; Node built-ins + git + the `opencode` CLI only.
+- Behavioral runs cost model tokens: they are manual, one case at a time, and never run in CI. CI runs `selftest.mjs` only.
+- Every criterion in `checks.mjs` needs a free sensitivity check in `selftest.mjs` (one PASS case and one FAIL case).
+- If you change a fixture's declared state, update `tests/evaluation.md` in the same commit — the rubric and the fixture are one contract.
+- Evidence (`tests/harness/evidence/`) is gitignored local output; never commit it, never validate it as repository content.
+- A `REVIEW` verdict is a manual checkpoint: adjudicate it in an `ADJUDICATION.md` next to the evidence. The harness must never auto-promote `REVIEW` to `PASS`.
 
 ## Style
 

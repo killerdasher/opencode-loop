@@ -28,5 +28,8 @@ jobs:
       - name: Self-test (validator must catch broken copies)
         run: node scripts/validate.mjs --self-test
 
+      - name: Behavioral harness self-test (free - fixtures, checks, parser regressions; no model calls)
+        run: node tests/harness/selftest.mjs
+
       - name: Installer tests (temporary directories only)
         run: node scripts/validate.mjs --install-test

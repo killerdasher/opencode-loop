@@ -181,9 +181,28 @@ node scripts/validate.mjs              # structure, frontmatter, references, doc
 node scripts/validate.mjs --self-test  # proves the validator catches deliberately broken copies
 node scripts/validate.mjs --install-test  # runs both installers against temp dirs
 node scripts/validate.mjs --all        # everything
+
+node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
 Zero dependencies — Node.js only. The same checks run in CI on Linux and Windows (see [docs/architecture.md](docs/architecture.md) for the full design).
+
+### Behavioral evaluation
+
+Structural validation proves the files are correct; it does not prove agent
+behavior. The behavioral harness in `tests/harness/` runs the Cases A–I from
+[tests/evaluation.md](tests/evaluation.md) against a live model session in an
+isolated fixture repository, and judges the result from observable evidence
+(transcript, git diff, an independent re-run of the fixture's tests):
+
+```sh
+node tests/harness/run-case.mjs --case A --arm loop   # one run (costs model tokens)
+```
+
+CI runs only the free harness self-test, never model sessions. The A/B
+comparison methodology (standard OpenCode vs LOOP) is specified in
+[tests/comparison.md](tests/comparison.md); no comparative results are
+claimed yet.
 
 ## Known limitations
 
@@ -220,8 +239,19 @@ opencode-loop/
 │   ├── install.ps1                      # Windows installer
 │   ├── install.sh                       # Linux/macOS installer
 │   └── validate.mjs                     # repository validator (3 modes)
-├── tests/evaluation.md                  # behavioral evaluation suite (Cases A–I)
-├── docs/                                # architecture and design principles
+├── tests/
+│   ├── evaluation.md                    # behavioral evaluation rubric (Cases A–I)
+│   ├── comparison.md                    # A/B comparison methodology (no results claimed)
+│   └── harness/                         # semi-automated evaluation harness
+│       ├── README.md                    # usage, exit codes, costs, safety
+│       ├── fixtures.mjs                 # isolated fixture repos for Cases A–I
+│       ├── transcript.mjs               # transcript + git-diff evidence parsers
+│       ├── checks.mjs                   # objective PASS/FAIL/BLOCKED/REVIEW criteria
+│       ├── run-case.mjs                 # runner (`opencode run --format json`)
+│       └── selftest.mjs                 # free self-test (no model calls)
+├── docs/
+│   ├── architecture.md · design-principles.md
+│   └── adr/0001-runtime-orchestration.md  # skill-only vs plugin vs orchestrator
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
 ```

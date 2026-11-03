@@ -35,8 +35,16 @@ const REQUIRED_FILES = [
   'scripts/install.sh',
   'scripts/validate.mjs',
   'tests/evaluation.md',
+  'tests/comparison.md',
+  'tests/harness/README.md',
+  'tests/harness/fixtures.mjs',
+  'tests/harness/transcript.mjs',
+  'tests/harness/checks.mjs',
+  'tests/harness/run-case.mjs',
+  'tests/harness/selftest.mjs',
   'docs/architecture.md',
   'docs/design-principles.md',
+  'docs/adr/0001-runtime-orchestration.md',
   '.github/workflows/validate.yml',
   'README.md',
   'CONTRIBUTING.md',
@@ -97,7 +105,7 @@ function existsExactCase(target, trustedRoot) {
   return true;
 }
 
-/** Recursive file list, excluding .git. */
+/** Recursive file list, excluding .git and local evaluation evidence. */
 function walkFiles(dir, out = []) {
   let entries;
   try {
@@ -108,8 +116,13 @@ function walkFiles(dir, out = []) {
   for (const entry of entries) {
     if (entry.name === '.git') continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkFiles(full, out);
-    else out.push(full);
+    if (entry.isDirectory()) {
+      // Evidence is transient local output of behavioral runs (gitignored):
+      // it is not repository content and must never fail repository checks
+      // (a transcript could contain arbitrary model output).
+      if (path.basename(dir) === 'harness' && entry.name === 'evidence') continue;
+      walkFiles(full, out);
+    } else out.push(full);
   }
   return out;
 }
@@ -165,6 +178,16 @@ function validateRepo(root) {
     const ok = existsExactCase(full, root);
     push(`structure:${rel}`, ok, ok ? rel : `missing: ${rel}`);
   }
+
+  // Behavioral-run evidence is local, gitignored output: it must never be
+  // committable by accident (transcripts may contain model output).
+  const gitignore = readIfExists(path.join(root, '.gitignore'));
+  const ignoresEvidence = gitignore !== null && gitignore.includes('tests/harness/evidence/');
+  push(
+    'structure:gitignore-evidence',
+    ignoresEvidence,
+    ignoresEvidence ? 'tests/harness/evidence/ ignored' : '.gitignore must exclude tests/harness/evidence/',
+  );
 
   // -- Command --------------------------------------------------------------
   const commandPath = path.join(root, '.opencode/commands/loop.md');
@@ -247,6 +270,33 @@ function validateRepo(root) {
     push(`reference:${name}`, ok, ok ? 'present and non-empty' : 'missing or empty');
   }
 
+  // -- Reporting contract (F5) ---------------------------------------------
+  // The banner and settings restatement are the visible contract of every
+  // LOOP run; the status vocabulary is the honesty contract. Deleting any of
+  // them from the engine must fail validation.
+  if (skillText !== null) {
+    const hasBanner = skillText.includes('LOOP | ITERATION');
+    push('skill:reporting-banner', hasBanner, hasBanner ? 'LOOP | ITERATION banner format present' : 'SKILL.md missing LOOP | ITERATION banner format');
+    const hasSettings = skillText.includes('SETTINGS:');
+    push('skill:settings-restatement', hasSettings, hasSettings ? 'SETTINGS: restatement present' : 'SKILL.md missing SETTINGS: restatement');
+  } else {
+    push('skill:reporting-banner', false, 'SKILL.md unreadable');
+    push('skill:settings-restatement', false, 'SKILL.md unreadable');
+  }
+
+  const gates = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/quality-gates.md'));
+  if (gates === null) {
+    push('reporting:status-vocabulary', false, 'quality-gates.md unreadable');
+  } else {
+    const labels = ['VERIFIED', 'IMPLEMENTED BUT NOT VERIFIED', 'BLOCKED', 'NOT APPLICABLE', 'FAILED'];
+    const missing = labels.filter((l) => !gates.includes(l));
+    push(
+      'reporting:status-vocabulary',
+      missing.length === 0,
+      missing.length === 0 ? 'all 5 status labels defined' : `missing labels: ${missing.join(', ')}`,
+    );
+  }
+
   // -- Relative markdown links (case-exact) ----------------------------------
   for (const file of walkFiles(root).filter((f) => f.endsWith('.md'))) {
     const text = readIfExists(file);
@@ -308,6 +358,12 @@ function validateRepo(root) {
     workflow !== null && workflow.includes('validate.mjs'),
     workflow !== null && workflow.includes('validate.mjs') ? 'runs validate.mjs' : 'workflow missing or does not run validate.mjs',
   );
+  const runsHarnessSelftest = workflow !== null && workflow.includes('tests/harness/selftest.mjs');
+  push(
+    'ci:harness-selftest',
+    runsHarnessSelftest,
+    runsHarnessSelftest ? 'runs free harness self-test' : 'workflow must run node tests/harness/selftest.mjs (free, no model calls)',
+  );
 
   // -- Documentation ---------------------------------------------------------
   const readme = readIfExists(path.join(root, 'README.md'));
@@ -321,6 +377,29 @@ function validateRepo(root) {
 
   const changelog = readIfExists(path.join(root, 'CHANGELOG.md'));
   push('docs:changelog', changelog !== null && /0\.1\.0/.test(changelog), changelog !== null && /0\.1\.0/.test(changelog) ? 'version 0.1.0 present' : 'CHANGELOG missing 0.1.0');
+  // F4: the changelog must document the CURRENT version, not just the first
+  // release. "Current" = any semver heading beyond 0.1.0 (the initial
+  // release); newest-first ordering is also enforced (Keep a Changelog).
+  if (changelog === null) {
+    push('docs:changelog-current-version', false, 'CHANGELOG missing');
+  } else {
+    const versions = [...changelog.matchAll(/^## \[(\d+)\.(\d+)\.(\d+)\]/gm)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+    const newerThanFirst = versions.filter((v) => !(v[0] === 0 && v[1] === 1 && v[2] === 0));
+    const ordered = versions.every((v, i) => i === 0 || (() => {
+      const p = versions[i - 1];
+      return v[0] < p[0] || (v[0] === p[0] && (v[1] < p[1] || (v[1] === p[1] && v[2] <= p[2])));
+    })());
+    const ok = newerThanFirst.length > 0 && ordered;
+    push(
+      'docs:changelog-current-version',
+      ok,
+      ok
+        ? `${newerThanFirst.length} version(s) beyond 0.1.0, newest first`
+        : newerThanFirst.length === 0
+          ? 'no version beyond 0.1.0 documented (current version missing)'
+          : 'version headings are not newest-first',
+    );
+  }
 
   const license = readIfExists(path.join(root, 'LICENSE'));
   push('docs:license', license !== null && /MIT/i.test(license), license !== null && /MIT/i.test(license) ? 'MIT license present' : 'LICENSE missing or not MIT');
@@ -331,6 +410,30 @@ function validateRepo(root) {
   } else {
     const missing = 'ABCDEFGHI'.split('').filter((c) => !new RegExp(`Case ${c}\\b`).test(evaluation));
     push('tests:evaluation-cases', missing.length === 0, missing.length === 0 ? 'Cases A-I present' : `missing cases: ${missing.join(', ')}`);
+  }
+
+  // -- F3: evaluation framework alignment ------------------------------------
+  // tests/evaluation.md (after-the-fact rubric) and the skill's
+  // evaluation-cases.md (in-session guidance) both claim they "must stay
+  // aligned"; this check makes that claim enforceable.
+  const rubric = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/evaluation-cases.md'));
+  if (evaluation === null || rubric === null) {
+    push('tests:evaluation-alignment', false, 'tests/evaluation.md or evaluation-cases.md missing');
+  } else {
+    const caseIds = (t) => new Set([...t.matchAll(/^## Case ([A-I])\b/gm)].map((m) => m[1]));
+    const rubricIds = caseIds(evaluation);
+    const guideIds = caseIds(rubric);
+    const rubricOnly = [...rubricIds].filter((c) => !guideIds.has(c)).sort();
+    const guideOnly = [...guideIds].filter((c) => !rubricIds.has(c)).sort();
+    const complete = rubricIds.size === 9 && guideIds.size === 9;
+    const ok = rubricOnly.length === 0 && guideOnly.length === 0 && complete;
+    push(
+      'tests:evaluation-alignment',
+      ok,
+      ok
+        ? `both documents cover Cases ${[...rubricIds].sort().join('')}`
+        : `drift: evaluation.md only=[${rubricOnly.join('')}] evaluation-cases.md only=[${guideOnly.join('')}] counts=${rubricIds.size}/${guideIds.size} (need 9/9)`,
+    );
   }
 
   // -- Secrets ---------------------------------------------------------------
@@ -451,7 +554,10 @@ function copyRepoToTemp(root, baseTmp) {
     recursive: true,
     filter: (src) => {
       const base = path.basename(src);
-      return base !== '.git';
+      if (base === '.git') return false;
+      // Never copy behavioral evidence: transient local output, not content.
+      const rel = path.relative(root, src).split(path.sep).join('/');
+      return !rel.startsWith('tests/harness/evidence');
     },
   });
   return dest;
@@ -524,6 +630,54 @@ function runSelfTest(root) {
       expect: 'installer:ps1:content',
       file: 'scripts/install.ps1',
       apply: (t) => t.replace(/-Overwrite/g, '-Replace'),
+    },
+    // -- 0.3.0 audit findings (F3/F4/F5) + new-file guards --------------------
+    {
+      id: 'evaluation rubric loses a case (alignment)',
+      expect: 'tests:evaluation-alignment',
+      file: 'tests/evaluation.md',
+      apply: (t) => t.replace(/^## Case G - .+$/m, '## Scenario G'),
+    },
+    {
+      id: 'changelog loses the current version',
+      expect: 'docs:changelog-current-version',
+      file: 'CHANGELOG.md',
+      apply: (t) => t.replace(/^## \[0\.2\.0\][^\n]*$/m, '## legacy'),
+    },
+    {
+      id: 'skill loses the iteration banner',
+      expect: 'skill:reporting-banner',
+      file: '.opencode/skills/loop-engine/SKILL.md',
+      apply: (t) => t.split('LOOP | ITERATION').join('ITERATION LINE'),
+    },
+    {
+      id: 'skill loses the SETTINGS restatement',
+      expect: 'skill:settings-restatement',
+      file: '.opencode/skills/loop-engine/SKILL.md',
+      apply: (t) => t.split('SETTINGS:').join('SETTINGS ='),
+    },
+    {
+      id: 'quality gates lose a status label',
+      expect: 'reporting:status-vocabulary',
+      file: '.opencode/skills/loop-engine/references/quality-gates.md',
+      apply: (t) => t.split('IMPLEMENTED BUT NOT VERIFIED').join('UNVERIFIED'),
+    },
+    {
+      id: 'gitignore stops excluding evidence',
+      expect: 'structure:gitignore-evidence',
+      file: '.gitignore',
+      apply: (t) => t.split('tests/harness/evidence/').join('tests/harness/evidence-keep/'),
+    },
+    {
+      id: 'CI drops the harness self-test step',
+      expect: 'ci:harness-selftest',
+      file: '.github/workflows/validate.yml',
+      apply: (t) => t.split('tests/harness/selftest.mjs').join('tests/harness/run-case.mjs --build-only'),
+    },
+    {
+      id: 'harness README deleted',
+      expect: 'structure:tests/harness/README.md',
+      delete: 'tests/harness/README.md',
     },
   ];
 

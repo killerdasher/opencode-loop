@@ -21,3 +21,7 @@ node_modules/
 
 # Test scratch space
 tmp/
+
+# Behavioral evaluation evidence (session transcripts and reports; regenerate
+# with `node tests/harness/run-case.mjs`)
+tests/harness/evidence/

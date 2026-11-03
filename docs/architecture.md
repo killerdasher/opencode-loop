@@ -41,20 +41,53 @@ The command is a thin entry point; the skill is the engine. This separation exis
 | Refuse-and-backup overwrite policy | The install target is user configuration. Silent overwrite could destroy a user's own `/loop` command; identical-file skipping makes upgrades idempotent without ever being destructive. |
 | `XDG_CONFIG_HOME` honored by both installers | Matches OpenCode's own global-config resolution, makes the install destination standard instead of invented, and gives tests an isolation mechanism that never touches the real config. |
 | Case-exact path checks in the validator | Windows filesystems hide case mismatches that would break Linux/macOS installs; CI runs on Linux to catch them end-to-end. |
-| Behavioral evaluation lives in `tests/evaluation.md` | Structural checks are automated; behavioral judgment (Cases A–I) requires a live model session, so the suite documents repeatable setups and observable pass criteria instead of pretending to be CI. |
+| Behavioral evaluation lives in `tests/evaluation.md` | Structural checks are automated; behavioral judgment (Cases A–I) requires a live model session. The rubric defines observable criteria, and the semi-automated harness in `tests/harness/` executes them against real sessions — CI still runs only the free parts, never model calls. |
+| Skill-only runtime retained (see `docs/adr/0001-runtime-orchestration.md`) | Plugins or an external orchestrator could enforce iteration caps and persist state, but would add the project's first dependency, break the two-file portability story, and couple to OpenCode APIs that change. The ADR records the comparison and the triggers that would reopen it. |
+| Behavioral evidence is local and gitignored | Transcripts contain model output; they are run artifacts, not repository content. The validator excludes `tests/harness/evidence/` from all checks and `.gitignore` (enforced by a check) keeps it out of commits. |
+
+## Behavioral evaluation architecture
+
+`tests/harness/` turns the Cases A–I rubric into repeatable runs:
+
+```
+fixtures.mjs ──builds──▶ isolated git fixture (temp/evidence dir, isolated git identity)
+     │
+     ▼
+run-case.mjs ──arm setup──▶ loop: install LOOP (project scope, committed to baseline)
+     │                      control: no LOOP
+     │  opencode run --standalone --format json --auto   (official documented automation path)
+     ▼
+transcript.mjs ◀── transcript.ndjson + git status --porcelain
+     │             (timeline: bash/write/text/obs; unknown event shapes surfaced, not dropped)
+     ▼
+checks.mjs ──objective criteria──▶ PASS / FAIL / BLOCKED / REVIEW (verdict precedence FAIL>BLOCKED>REVIEW>PASS)
+     │
+     ▼
+evidence/<run>/: report.json, report.md, transcript.ndjson, fixture/, ADJUDICATION.md
+```
+
+Key properties:
+
+- **The harness, not the agent, judges tests** — the fixture suite is re-run after the session.
+- **`REVIEW` is first-class** — criteria needing human judgment never auto-promote to `PASS`; adjudication is recorded next to the evidence.
+- **Free self-test** (`selftest.mjs`, run in CI) proves fixtures build, seeds are real, criteria can fail, and the evidence parsers hold against every defect found in pilot runs.
+- **Runs cost model tokens** — manual, one case at a time; CI never runs them.
+
+The A/B comparison protocol (standard OpenCode vs LOOP) is specified in `tests/comparison.md` and has **no results yet** — one loop-arm pilot (Case A) exists; no control-arm runs.
 
 ## Validation architecture
 
 `scripts/validate.mjs` has three modes, all zero-dependency:
 
-- **Structural** — required files, command/skill frontmatter rules (name format, directory match, description length, `$ARGUMENTS`, skill invocation, no forced agent), STAGE 0–8 headings, reference resolution, case-exact relative-link checking, installer behavior markers, optional `bash -n` / PowerShell parse syntax checks (skipped with a `SKIP` line when no runtime exists), CI wiring, doc completeness, and a secret-pattern scan.
-- **`--self-test`** — copies the repository to a temp directory, applies 11 known corruptions (missing `$ARGUMENTS`, invalid skill name, broken links, injected secret, …), and asserts the structural validator fails on exactly the expected check. This guards against a validator that always passes.
+- **Structural** — required files, command/skill frontmatter rules (name format, directory match, description length, `$ARGUMENTS`, skill invocation, no forced agent), STAGE 0–8 headings, reference resolution, case-exact relative-link checking, installer behavior markers, optional `bash -n` / PowerShell parse syntax checks (skipped with a `SKIP` line when no runtime exists), CI wiring (including the harness self-test step), doc completeness (including changelog currency and evaluation-framework alignment), the reporting contract (banner, `SETTINGS:`, status vocabulary), and a secret-pattern scan.
+- **`--self-test`** — copies the repository to a temp directory, applies 19 known corruptions (missing `$ARGUMENTS`, invalid skill name, broken links, injected secret, dropped reporting contract, drifted evaluation cases, …), and asserts the structural validator fails on exactly the expected check. This guards against a validator that always passes.
 - **`--install-test`** — runs both installers end to end in temp directories with `XDG_CONFIG_HOME` redirected: fresh install → idempotent rerun → refusal to overwrite differing files → overwrite-with-backup → dry-run (no changes) → project scope → uninstall-with-backup. The real user configuration is never a test destination.
 
-CI (`.github/workflows/validate.yml`) runs all three modes on `ubuntu-latest` and `windows-latest`, so both installers execute under both platforms' shells (GitHub runners ship bash on Windows and pwsh on Linux).
+CI (`.github/workflows/validate.yml`) runs all three modes plus `tests/harness/selftest.mjs` on `ubuntu-latest` and `windows-latest`, so both installers execute under both platforms' shells (GitHub runners ship bash on Windows and pwsh on Linux).
 
 ## Compatibility
 
 - **OpenCode:** designed against the V2 documentation for Agent Skills (`SKILL.md`, `name`/`description` frontmatter, `^[a-z0-9]+(-[a-z0-9]+)*$` name rule) and custom commands (`commands/*.md`, `$ARGUMENTS`). Verified against OpenCode v2.2.5 during development.
 - **Installers:** Windows PowerShell 5.1+ (and pwsh), bash 3.2+ (macOS system bash) — no bashisms beyond POSIX plus `local`.
 - **Validator:** Node.js 16.7+ (`fs.cpSync`); developed and run on Node 24.
+- **Behavioral harness:** Node.js built-ins + git + the `opencode` CLI. Repeatable sessions use the officially documented `opencode run --format json` automation path (NDJSON transcript), verified against OpenCode v2.2.5.

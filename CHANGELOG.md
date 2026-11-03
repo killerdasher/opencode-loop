@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Unreleased changes for 0.3.0 — independent engineering audit and behavioral validation. **Not yet released; no version tag or GitHub release exists for these changes.**
+
+### Added
+
+- **Behavioral evaluation harness** (`tests/harness/`): semi-automated execution of evaluation Cases A–I — isolated fixture repositories (git-identity-isolated, temp-dir only), one model session per run through the officially documented `opencode run --format json` path, evidence collection (transcript, git diff, independent harness re-run of the fixture suite), and objective criteria with a four-level verdict (`PASS` / `FAIL` / `BLOCKED` / `REVIEW`, precedence FAIL > BLOCKED > REVIEW > PASS). Manual checkpoints return `REVIEW` and are adjudicated next to the evidence; the harness never auto-promotes them.
+- **Free harness self-test** (`tests/harness/selftest.mjs`, run in CI): proves fixtures build, seeded states are real (failing fixtures fail, green fixtures pass, Case G's blocker blocks), criteria can both pass and fail, and the evidence parsers hold against the pilot-run defects. 64 checks, no model calls.
+- **Behavioral evaluation rubric rewrite** (`tests/evaluation.md`): per case — controlled initial conditions, test objective, observable expected/forbidden behavior, evidence, and objective PASS/FAIL/BLOCKED/REVIEW criteria mapped to harness check IDs; honest result ledger (Case A pilot executed; B–I not yet run).
+- **A/B comparison methodology** (`tests/comparison.md`): controlled protocol comparing standard OpenCode execution vs LOOP on identical tasks/snapshots/model/permissions, with metric definitions, anti-gaming reporting rules, and an explicit ledger stating **no comparative results exist yet**.
+- **ADR 0001** (`docs/adr/0001-runtime-orchestration.md`): compares skill-only, skill+plugin, and external-orchestrator architectures against official OpenCode APIs (verified); retains skill-only and records revisit triggers.
+- Validator checks: evaluation-framework alignment (rubric vs in-session guidance must cover the same Cases A–I), changelog currency (a version beyond 0.1.0 must be documented, newest-first), reporting contract (iteration banner, `SETTINGS:` restatement, five-label status vocabulary), `.gitignore` must exclude behavioral evidence, CI must run the harness self-test — each with a mutation proving it can fail.
+
+### Fixed
+
+- Harness pilot defects (found by executing Case A, not by inspection): phantom diff paths from trimming `git status --porcelain` output (`src/range.mjs` parsed as `rc/range.mjs`); the harness's own LOOP install polluting the scope check (arm setup is now committed to the fixture baseline without touching user work); `read`/`skill`/`glob` tool events misclassified as file writes (corrupted ordering facts); running/completed tool-event pairs double-counted.
+
+### Changed
+
+- CI runs the free harness self-test in addition to the three validator modes.
+- `walkFiles` in the validator excludes `tests/harness/evidence/` (transient local run output is not repository content and must never fail repository checks).
+
 ## [0.2.0] - 2026-11-02
 
 Verified rebuild of LOOP. Same public interface as 0.1.0 (`/loop` command, `loop-engine` skill, file layout, flags), re-engineered and proven against OpenCode v2.2.5 with an end-to-end live-session run.
