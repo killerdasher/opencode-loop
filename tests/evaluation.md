@@ -18,15 +18,20 @@ correctness, **not** agent behavioral adherence. Structural checks live in
 
 ```sh
 node tests/harness/selftest.mjs                 # free: fixtures + check sensitivity (no model calls)
-node tests/harness/run-case.mjs --case A --arm loop      # one behavioral run (costs model tokens)
-node tests/harness/run-case.mjs --case D --arm control   # identical task, no LOOP installed
+node tests/harness/run-case.mjs --case A --arm loop --allow-auto      # one behavioral run (costs model tokens)
+node tests/harness/run-case.mjs --case D --arm control --allow-auto   # identical task, no LOOP installed
 ```
+
+Unattended runs require the `--allow-auto` operator acknowledgement: auto-
+approval of permissions is never enabled silently. The runner applies a
+least-privilege permission config and a scrubbed environment to both arms;
+it is not an OS sandbox — isolation model: `tests/harness/README.md`.
 
 The harness builds an isolated fixture repository, runs one model session
 through the officially supported `opencode run --format json` automation path,
 collects evidence (transcript, git diff, independent re-run of the fixture
-suite), and applies the objective criteria below. Details, exit codes, and cost
-controls: `tests/harness/README.md`.
+suite), and applies the objective criteria below. Details, exit codes, cost
+controls, and the safety contract: `tests/harness/README.md`.
 
 ### Manual fallback
 

@@ -13,8 +13,9 @@ Zero dependencies: Node built-ins + git + the `opencode` CLI only.
 # Free (no model calls, no network) — run this always:
 node tests/harness/selftest.mjs
 
-# One behavioral run (costs model tokens — see Costs):
-node tests/harness/run-case.mjs --case A --arm loop
+# One behavioral run (costs model tokens — see Costs; requires the
+# --allow-auto operator acknowledgement described under Isolation model):
+node tests/harness/run-case.mjs --case A --arm loop --allow-auto
 
 # Build/inspect a fixture without running a model:
 node tests/harness/run-case.mjs --case D --build-only
@@ -27,10 +28,12 @@ node tests/harness/run-case.mjs --case D --build-only
 | `--case A..I` | which evaluation case to run (required) |
 | `--arm loop\|control` | `loop` = `/loop <task>` with LOOP installed into the fixture; `control` = plain task prompt, no LOOP (default `loop`) |
 | `--model provider/model` | pin the model; default = session default |
+| `--allow-auto` | **required** for any model run: operator acknowledgement that the session runs unattended with auto-approval. Without it the runner refuses (exit 4) |
+| `--env-pass NAME,...` | additional environment variables to forward to the evaluated session (values never printed); default is an allowlist that drops credential-shaped variables |
 | `--timeout ms` | model-run timeout (default 900000) |
 | `--evidence dir` | override the evidence directory |
 | `--keep` | keep the fixture directory even on PASS |
-| `--build-only` | fixture construction + seed sanity only; temp dir removed; no model call |
+| `--build-only` | fixture construction + seed sanity only; temp dir removed; no model call; no acknowledgement needed |
 | `--list` | print case IDs |
 
 ### Exit codes
@@ -51,9 +54,10 @@ Verdict precedence: `FAIL` > `BLOCKED` > `REVIEW` > `PASS`.
 tests/harness/evidence/<ISO-timestamp>-case<X>-<arm>/   (gitignored)
 ├── transcript.ndjson   raw `opencode run --format json` output
 ├── run-stderr.log      CLI stderr
-├── report.json         verdict, model, session, facts, per-criterion results
-├── report.md           human-readable summary + criterion table
-├── session.sqlite      isolated OpenCODE_DB for this run
+├── report.json         verdict, model, session, facts, safety record, per-criterion results
+├── report.md           human-readable summary + safety record + criterion table
+├── opencode.permissions.json  the least-privilege permission config handed to this run
+├── session.sqlite      isolated OPENCODE_DB for this run (+ -wal/-shm)
 ├── fixture/            the fixture repo as the agent left it
 └── ADJUDICATION.md     (written by the evaluator, not the harness)
 ```
@@ -75,34 +79,72 @@ tests/harness/evidence/<ISO-timestamp>-case<X>-<arm>/   (gitignored)
 ## Costs
 
 - `selftest.mjs`: **free** — fixture construction, git checks, synthetic
-  transcript parsing, check-sensitivity mutations. No model, no network.
+  transcript parsing, check-sensitivity mutations, and the unattended-run
+  safety contract (env scrubber, permission rules, acknowledgement gate).
+  No model, no network, no acknowledgement required.
 - `run-case.mjs`: **costs model tokens** (one session per run; a small case
-  is ~20–70 s on the session default model). Run manually, one case at a time.
-  Pin `--model` when comparing runs.
+  is ~20–70 s on the session default model) and requires `--allow-auto`.
+  Run manually, one case at a time. Pin `--model` when comparing runs.
 - **CI never runs model sessions.** CI runs `scripts/validate.mjs --all` and
   `selftest.mjs` only.
 
-## Safety guarantees
+## Isolation model — what is isolated, what is not
 
-- Fixtures are built in temp/evidence directories; nothing outside them is
-  written.
-- Git runs with an isolated config (no system/global config, fixture-local
-  identity) — the user's git configuration is never read or changed.
-- LOOP is installed into the fixture only (`-Scope project`); the real
-  OpenCode configuration directory is never a destination.
-- Session state goes to an `OPENCODE_DB` file inside the evidence directory,
-  never the user's normal OpenCode database.
-- The harness never commits, pushes, or tags in this repository.
+An agent under evaluation is an ordinary child process running as the user.
+Keep the following five notions apart, because the harness isolates some of
+them and explicitly does not isolate others:
+
+| Notion | Status in a model run |
+| --- | --- |
+| **Fixture directory** | Isolated as a *destination of the harness's own actions*: built in a temp dir, seed-verified, and — on PASS — removed. The harness never writes outside it and a gitignore'd evidence dir. |
+| **Session & database** | Isolated per run: `opencode run --standalone` boots a private server and `OPENCODE_DB` points it at `session.sqlite` inside the evidence dir (verified against real run artifacts; a non-standalone run would instead talk to the user's shared background server, so `--standalone` is required, not decorative). |
+| **Configuration** | **Not isolated.** OpenCode merges the user's global config into every run (providers, plugins, instructions). The harness layers a least-privilege permission config on top via the documented `OPENCODE_CONFIG` tier (written to `opencode.permissions.json`), which overrides the global config on conflicting keys; it does not remove the global config. |
+| **Permission restrictions** | Explicit opt-in with least privilege: a model run is refused without `--allow-auto`; with it, the permission config hard-denies `external_directory` (tools touching paths outside the fixture), `webfetch`, `websearch`, `*.env` reads, and `curl`/`wget` bash commands. Under `--auto` these denies are still enforced (documented OpenCode behavior); everything OpenCode would prompt for is approved. |
+| **Operating-system sandbox** | **No operating-system sandbox** exists. `bash`, `edit`, and `read` default to allow; a child process has the user's effective abilities. The permission config contains a few named risky actions; it cannot contain `bash` generally. Anything requiring true isolation (e.g. adversarial models, untrusted tasks) must run in a disposable environment (container/VM/user account) — that is the operator's job, not LOOP's. |
+
+Additional safety controls on every model run (both A/B arms identically):
+
+- **Harness-side git is identity-isolated.** All git calls from the harness run
+  with `GIT_CONFIG_NOSYSTEM=1` and a fixture-local `GIT_CONFIG_GLOBAL` — the
+  user's git configuration is never read or changed by the harness (the
+  evaluated agent's own git calls run against the user's real config,
+  confined in effect by the fixture being a repository without a remote).
+- **The harness never commits, pushes, or tags in this repository.**
+
+Per-run controls (both A/B arms identically):
+
+- **Acknowledgement gate.** Without `--allow-auto` the runner exits 4 before
+  any side effect. Running evaluations unattended is a decision the operator
+  must make explicitly; the acknowledgement is not a substitute for the
+  isolation described above.
+- **Env allowlist.** The child environment is built with `keeperEnv`
+  (`safety.mjs`): only runtime basics (PATH, HOME/TEMP/system paths, locale,
+  proxy vars for egress, Windows system vars incl. `SystemRoot`,
+  `ComSpec`, `PSModulePath`) plus the harness's own
+  `OPENCODE_DB`/`OPENCODE_CONFIG` are inherited. Matching is case-insensitive
+  on Windows (its real spellings are `Path`, `ComSpec`) and case-sensitive on
+  POSIX (where `path` is a different variable). Credential-shaped variables
+  (`*_TOKEN`, `*_API_KEY`, SSH agents…) never reach the session; the report
+  records the COUNT of dropped variables, never their names.
+  `--env-pass NAME,...` forwards named extras (e.g. the provider key an
+  env-auth setup needs), visible in the report.
+- **Evidence hygiene.** Evidence is local and gitignored; reports record the
+  COUNT of scrubbed-out variables, never their names — the set of variables
+  that exist on a machine is not report content — and no values are ever
+  printed. Only variables the operator explicitly named with `--env-pass`
+  appear by name (the operator knows them already). The full transcript and
+  session DB stay in the evidence dir.
 
 ## Files
 
 | File | Role |
 | --- | --- |
 | `fixtures.mjs` | builds Cases A–I; declares task, allowlist, test command, user files, seeded-state expectations; `commitFixturePaths()` records harness arm-setup without touching user work |
-| `transcript.mjs` | `parseTranscript()` (NDJSON → timeline) and `collectDiffFiles()` (porcelain → paths); parsers are extracted so the self-test can regression-test them |
+| `transcript.mjs` | `parseTranscript()` (NDJSON → timeline), `collectDiffFiles()` (porcelain → paths), and `writeReports()` (report.json/report.md); parsers and the writer are extracted so the self-test can regression-test them |
 | `checks.mjs` | objective criteria per case; returns per-check status + verdict aggregation |
-| `run-case.mjs` | CLI runner: fixture → arm setup → `opencode run` → evidence → evaluation → exit code |
-| `selftest.mjs` | free self-test: fixtures build, seeds are real, checks are sensitive, parser regressions (§5) |
+| `run-case.mjs` | CLI runner: fixture → arm setup → safety controls → `opencode run` → evidence → evaluation → exit code |
+| `safety.mjs` | unattended-run safety contract: `keeperEnv()` env allowlist, least-privilege `permissionRules()`/`writePermissionConfig()` |
+| `selftest.mjs` | free self-test: fixtures build, seeds are real, checks are sensitive, parser regressions, unattended-run safety contract |
 
 ## Adding a case
 

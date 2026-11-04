@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * FREE self-test for the behavioral harness - no model calls, no network.
+ * FREE self-test for the behavioral harness - no model calls, no network,
+ * no operator acknowledgement needed.
  *
- * Proves three things before anyone spends tokens on a real evaluation:
+ * Proves the following before anyone spends tokens on a real evaluation:
  *
  *   1. Fixtures build: every Case A-I fixture constructs a valid git
  *      repository in a temp directory with its declared baseline.
@@ -18,6 +19,11 @@
  *      synthetic events and real git output for every defect found during
  *      the Case A pilot (phantom diff paths, reads counted as writes,
  *      arm-setup commit sweeping user work).
+ *   5. Unattended-run safety contract: the runner refuses model runs without
+ *      the --allow-auto acknowledgement; the env scrubber drops credential
+ *      variables while keeping the runtime; the least-privilege permission
+ *      rules actually deny the risky primitives; the report writer renders
+ *      consistent files; verdict precedence holds; clean-up removes fixtures.
  *
  * Exit codes: 0 = all checks passed, 1 = failure.
  */
@@ -28,8 +34,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
-import { parseTranscript, collectDiffFiles } from './transcript.mjs';
+import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
+import { keeperEnv, permissionRules, writePermissionConfig } from './safety.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IS_WINDOWS = process.platform === 'win32';
@@ -148,6 +155,148 @@ function main() {
       { encoding: 'utf8', timeout: 60_000 });
     check(`cli:case-${id}:build-only`, r.status === 0,
       r.status === 0 ? '' : `exit ${r.status}: ${`${r.stdout || ''}${r.stderr || ''}`.slice(0, 300)}`);
+    // Cleanup property: --build-only must remove the fixture it printed as
+    // built (temporary directories are cleaned up safely).
+    if (id === 'A' && r.status === 0) {
+      const printed = /\[harness\] fixture built: (.+)/.exec(r.stdout || '');
+      const fixturePath = printed ? printed[1].trim() : null;
+      check('cleanup:build-only-removes-fixture',
+        fixturePath != null && !fs.existsSync(fixturePath),
+        fixturePath ? String(fixturePath) : 'no fixture path in build-only output');
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // 4. Unattended-run safety contract (free - no model calls here either)
+  // ---------------------------------------------------------------------
+  // The runner must refuse to start a model run without explicit operator
+  // acknowledgement: auto-approval is never enabled silently.
+  {
+    const r = spawnSync(process.execPath, [path.join(HARNESS_DIR, 'run-case.mjs'), '--case', 'A'],
+      { encoding: 'utf8', timeout: 30_000 });
+    const text = `${r.stdout || ''}${r.stderr || ''}`;
+    check('runner:auto-approval-requires-ack',
+      r.status === 4 && text.includes('--allow-auto'),
+      `exit ${r.status}${text.includes('--allow-auto') ? '; explains the acknowledgement' : '; MESSAGE MISSING ACK'}`);
+  }
+
+  // Env scrubbing: credential-shaped variables are not inherited; the
+  // runtime basics and the operator-named pass-throughs are. Matching is
+  // case-insensitive on Windows (its real spellings are Path, ComSpec,
+  // SystemRoot), case-sensitive on POSIX (where `path` is NOT `PATH`).
+  {
+    const selfIsWindows = process.platform === 'win32';
+    const scrub = (pass = []) => keeperEnv({
+      PATH: '/usr/bin:/bin', Path: 'C:\\Windows',
+      TEMP: '/tmp', TMPDIR: '/tmp', TERM: 'xterm',
+      GH_TOKEN: 'gh_x', GITHUB_TOKEN: 'gh_y', ANTHROPIC_API_KEY: 'sk_z',
+      SSH_AUTH_SOCK: '/tmp/agent', AWS_SECRET_ACCESS_KEY: 'aws',
+      SOMEUNKNOWN_CREDENTIAL: 'u', DB_PASSWORD: 'p',
+      // Windows-spelling variants of registry entries: kept on win32,
+      // deliberately treated as distinct vars (and dropped) on POSIX.
+      SystemRoot: 'C:\\Windows', ComSpec: 'cmd.exe',
+      ...pass.length ? { EXTRA_PASS_VAR: 'forwarded' } : {},
+    }, pass);
+    const clean = scrub();
+    const joined = Object.keys(clean.env).join(' ');
+    check('safety:env-scrubber-drops-credentials',
+      !/\b(GH_TOKEN|GITHUB_TOKEN|ANTHROPIC_API_KEY|SSH_AUTH_SOCK|AWS_SECRET_ACCESS_KEY|SOMEUNKNOWN_CREDENTIAL|DB_PASSWORD)\b/.test(joined)
+      && clean.dropped.length === (selfIsWindows ? 7 : 10), // POSIX drops `Path`/`SystemRoot`/`ComSpec` too (distinct vars)
+      `dropped(${clean.dropped.length}): ${clean.dropped.join(', ')}`);
+    check('safety:env-scrubber-keeps-runtime',
+      Boolean(clean.env.PATH) && Boolean(clean.env.TEMP) && Boolean(clean.env.TERM)
+      && (clean.env.Path || clean.env.PATH),
+      `kept: ${joined}`);
+    if (selfIsWindows) {
+      check('safety:env-windows-spelling-tolerance',
+        Boolean(clean.env.SystemRoot) && Boolean(clean.env.ComSpec),
+        `win32 case-insensitive registry matching keeps SystemRoot/ComSpec spellings`);
+    } else {
+      check('safety:env-posix-case-strictness',
+        !('Path' in clean.env) && !('SystemRoot' in clean.env) && !('ComSpec' in clean.env)
+        && 'PATH' in clean.env,
+        `posix keeps PATH, drops differently-cased variants`);
+    }
+    const withPass = scrub(['EXTRA_PASS_VAR']);
+    check('safety:env-pass-forwards-named-only',
+      withPass.env.EXTRA_PASS_VAR === 'forwarded' && !withPass.env.DB_PASSWORD,
+      `forwarded EXTRA_PASS_VAR, still dropped DB_PASSWORD`);
+  }
+
+  // Permission rules: the loud, tempting failures an unattended agent must
+  // not silently get away with are hard-denied even under --auto.
+  {
+    const rules = permissionRules();
+    check('safety:permission-rules-harden-auto-mode',
+      rules.external_directory === 'deny'
+      && rules.webfetch === 'deny' && rules.websearch === 'deny'
+      && rules.read['*.env'] === 'deny' && rules.read['*'] === 'allow'
+      && rules.bash['curl *'] === 'deny' && rules.bash['wget *'] === 'deny',
+      JSON.stringify(rules));
+    // The written config file must parse back to the same rules.
+    const permTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-perm-'));
+    const printed = writePermissionConfig(permTmp);
+    let ok = fs.existsSync(printed);
+    try {
+      ok = ok && JSON.parse(fs.readFileSync(printed, 'utf8')).permission.external_directory === 'deny'
+        && printed.endsWith('opencode.permissions.json');
+    } catch { ok = false; }
+    check('safety:permission-config-round-trips', ok, printed);
+    // tmp permission config must be cleaned up
+    fs.rmSync(permTmp, { recursive: true, force: true });
+  }
+
+  // Report writer: one call produces a parseable JSON and a markdown table
+  // that counts the criteria it was given (consistency property).
+  {
+    const reportTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-report-'));
+    const payload = {
+      case: 'C', arm: 'loop', verdict: 'REVIEW', date: new Date().toISOString(),
+      opencodeVersion: 'test', model: 'test-model', sessionID: 'ses_x',
+      fixtureDir: '/tmp/unused', facts: { bashCommands: ['node test/calc.test.mjs'], diffFiles: ['src/calc.mjs'], finalText: 'done' },
+      checks: [
+        { id: 'a', status: 'PASS', detail: 'fine' },
+        { id: 'b', status: 'REVIEW', detail: 'manual: needs eyes | contains a pipe' },
+      ],
+      safety: {
+        unattendedAutoApproval: true,
+        permissionConfigPath: 'tests/harness/evidence/x/opencode.permissions.json',
+        permissionRules: permissionRules(),
+        environmentScrubbed: true,
+        envNotInheritedCount: 1,
+        envForwardedByOperator: [],
+      },
+    };
+    writeReports(reportTmp, payload);
+    const jsonOk = (() => {
+      try { return JSON.parse(fs.readFileSync(path.join(reportTmp, 'report.json'), 'utf8')).checks.length === 2; } catch { return false; }
+    })();
+    const md = fs.readFileSync(path.join(reportTmp, 'report.md'), 'utf8');
+    const mdOk = md.includes('Verdict: **REVIEW**')
+      && md.includes('| a | PASS | fine |')
+      && md.includes('| b | REVIEW | manual: needs eyes \\| contains a pipe |')
+      && md.includes('--allow-auto')
+      // Dropped env var names must NOT be disclosed in the report: only their
+      // count (which variables exist on a machine is not report content).
+      && md.includes('1 var(s) not inherited')
+      && !md.includes('GH_TOKEN');
+    check('report:write-renders-consistent-files', jsonOk && mdOk, `jsonOk=${jsonOk} mdOk=${mdOk}`);
+    fs.rmSync(reportTmp, { recursive: true, force: true });
+  }
+
+  // Verdict precedence: BLOCKED outranks REVIEW (FAIL > BLOCKED > REVIEW > PASS).
+  {
+    const meta = {
+      caseId: 'C', userFiles: [], testCommand: null,
+      allowlist: ['src/calc.mjs'], forbiddenPaths: ['test/calc.test.mjs'],
+      requireLabels: [], forbiddenPhrases: [], maxDiffFiles: null, requireChanged: [],
+    };
+    const verdict = evaluate(meta, facts({
+      bashCommands: ['node test/calc.test.mjs'],
+      testOutcome: { status: 'PASS', output: 'ok' },
+      finalText: 'Partially blocked; annotated.',
+    })).verdict;
+    check('verdict:blocked-precedes-review', verdict === STATUS.BLOCKED, `verdict=${verdict}`);
   }
 
   // ---------------------------------------------------------------------

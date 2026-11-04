@@ -41,6 +41,7 @@ const REQUIRED_FILES = [
   'tests/harness/transcript.mjs',
   'tests/harness/checks.mjs',
   'tests/harness/run-case.mjs',
+  'tests/harness/safety.mjs',
   'tests/harness/selftest.mjs',
   'docs/architecture.md',
   'docs/design-principles.md',
@@ -187,6 +188,46 @@ function validateRepo(root) {
     'structure:gitignore-evidence',
     ignoresEvidence,
     ignoresEvidence ? 'tests/harness/evidence/ ignored' : '.gitignore must exclude tests/harness/evidence/',
+  );
+
+  // -- Behavioral runner safety contract ------------------------------------
+  // The runner must require explicit operator acknowledgement before enabling
+  // unattended auto-approval, must deliver a least-privilege permission config
+  // through the documented OPENCODE_CONFIG tier, and must scrub the child
+  // environment. The precise rule values are unit-tested in selftest.mjs;
+  // this is the anti-regression tripwire for the mechanism existing at all.
+  const runnerText = readIfExists(path.join(root, 'tests/harness/run-case.mjs'));
+  const safetyText = readIfExists(path.join(root, 'tests/harness/safety.mjs'));
+  // The gate needs BOTH halves: the acknowledgement flag and the actual
+  // assignment that delivers the permission config through
+  // OPENCODE_CONFIG (a comment mention alone cannot count).
+  push(
+    'harness:allow-auto-gate',
+    runnerText !== null
+      && runnerText.includes('--allow-auto')
+      && /.OPENCODE_CONFIG\s*=/.test(runnerText),
+    runnerText === null
+      ? 'run-case.mjs unreadable'
+      : 'model runs gate on --allow-auto acknowledgement + OPENCODE_CONFIG least-privilege config',
+  );
+  push(
+    'harness:scrubs-environment',
+    safetyText !== null && /ENV_KEEP\s*=\s*new Set/.test(safetyText) && /function keeperEnv/.test(safetyText),
+    safetyText === null ? 'safety.mjs unreadable' : 'keeperEnv allowlist present in safety.mjs',
+  );
+  const harnessReadme = readIfExists(path.join(root, 'tests/harness/README.md'));
+  const taxonomy = harnessReadme !== null && /no operating-system sandbox/i.test(harnessReadme);
+  push(
+    'docs:harness-isolation-taxonomy',
+    taxonomy,
+    taxonomy ? 'harness README states no OS sandbox exists' : 'tests/harness/README.md must state "no operating-system sandbox" (isolation honesty)',
+  );
+  const securityText = readIfExists(path.join(root, 'SECURITY.md'));
+  const harnessInScope = securityText !== null && /behavioral harness/i.test(securityText);
+  push(
+    'security:harness-in-scope',
+    harnessInScope,
+    harnessInScope ? 'SECURITY.md covers the behavioral harness' : 'SECURITY.md must cover the behavioral runner',
   );
 
   // -- Command --------------------------------------------------------------
@@ -670,6 +711,49 @@ function runSelfTest(root) {
       expect: 'structure:gitignore-evidence',
       file: '.gitignore',
       apply: (t) => t.split('tests/harness/evidence/').join('tests/harness/evidence-keep/'),
+    },
+    {
+      id: 'runner drops the auto-approval acknowledgement gate',
+      expect: 'harness:allow-auto-gate',
+      file: 'tests/harness/run-case.mjs',
+      apply: (t) => t.split('--allow-auto').join('--allow-acknowledged'),
+    },
+    {
+      id: 'runner drops the least-privilege config plumbing',
+      expect: 'harness:allow-auto-gate',
+      file: 'tests/harness/run-case.mjs',
+      // Replace the whole env-var name: appending a suffix would leave the
+      // checked literal (`OPENCODE_CONFIG`) as a substring and the gate would
+      // limp by on it.
+      apply: (t) => t.split('OPENCODE_CONFIG').join('HARNESS_PERMISSION_ENV'),
+    },
+    {
+      id: 'runner drops the environment scrubber module',
+      expect: 'harness:scrubs-environment',
+      file: 'tests/harness/safety.mjs',
+      // Invalidate both halves of the tripwire in one pass.
+      apply: (t) => t
+        .split('function keeperEnv').join('function keptEnvLegacy')
+        .split('ENV_KEEP = new Set').join('LEGACY_KEEP'),
+    },
+    {
+      id: 'harness README loses the isolation caveat',
+      expect: 'docs:harness-isolation-taxonomy',
+      file: 'tests/harness/README.md',
+      // Exact casing of the README phrase ("**No operating-system sandbox**").
+      apply: (t) => t.split('No operating-system sandbox').join('isolated by a full operating-system jail'),
+    },
+    {
+      id: 'SECURITY policy drops the behavioral harness',
+      expect: 'security:harness-in-scope',
+      file: 'SECURITY.md',
+      // Exact casing of the SECURITY.md phrase ("**Behavioral harness**").
+      apply: (t) => t.split('Behavioral harness').join('Unrelated packaging tooling'),
+    },
+    {
+      id: 'safety module deleted',
+      expect: 'structure:tests/harness/safety.mjs',
+      delete: 'tests/harness/safety.mjs',
     },
     {
       id: 'CI drops the harness self-test step',

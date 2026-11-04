@@ -1,9 +1,11 @@
 /**
- * Transcript and git-diff evidence extraction for the LOOP behavioral harness.
+ * Transcript and git-diff evidence extraction for the LOOP behavioral harness,
+ * plus the run-report writer.
  *
  * Kept separate from run-case.mjs so the free self-test can exercise these
- * parsers directly with synthetic input (regression tests for every parsing
- * defect found during the Case A pilot).
+ * parsers and the report writer directly with synthetic input (regression
+ * tests for every parsing defect found during the Case A pilot). Unattended-
+ * run safety controls (-env allowlist, permission rules) live in safety.mjs.
  *
  * Event shapes are taken from observed `opencode run --format json` output
  * (OpenCode v2.2.5), not from assumption:
@@ -162,4 +164,56 @@ export function collectDiffFiles(fixtureDir) {
     if (p) files.add(p);
   }
   return [...files].sort();
+}
+
+/**
+ * Persist one run's reports (report.json + report.md) into the evidence dir.
+ *
+ * report.json keeps the full payload except the raw timeline/allText/final
+ * text beyond 8000 chars (the full transcript is adjacent in
+ * transcript.ndjson); report.md carries the verdict, the safety disclosures
+ * (what was auto-approved, what was denied, what the env scrub did), the
+ * criterion table, and a bounded final-report excerpt. The report is written
+ * by the harness only; nothing else writes into the evidence dir.
+ *
+ * @param {string} evidenceDir
+ * @param {object} payload assembled by run-case.mjs
+ */
+export function writeReports(evidenceDir, payload) {
+  fs.writeFileSync(path.join(evidenceDir, 'report.json'), JSON.stringify(payload, null, 2), 'utf8');
+  const safety = payload.safety || {};
+  const envLine = safety.environmentScrubbed
+    ? `scrubbed to an allowlist${safety.envNotInheritedCount ? ` (${safety.envNotInheritedCount} var(s) not inherited)` : ''}${(safety.envForwardedByOperator || []).length ? `; operator-forwarded: ${safety.envForwardedByOperator.join(', ')}` : ''}`
+    : 'full parent environment';
+  const lines = [
+    `# Behavioral run - Case ${payload.case} (${payload.arm} arm)`,
+    '',
+    `- Verdict: **${payload.verdict}**`,
+    `- Date: ${payload.date}`,
+    `- OpenCode: ${payload.opencodeVersion}`,
+    `- Model: ${payload.model}`,
+    `- Session: ${payload.sessionID || 'n/a'}`,
+    `- Fixture: \`${payload.fixtureDir}\``,
+    `- Commands observed: ${payload.facts.bashCommands.length}`,
+    `- Files changed: ${payload.facts.diffFiles.length ? payload.facts.diffFiles.join(', ') : '(none)'}`,
+    '',
+    '## Run safety record',
+    '',
+    `- Unattended auto-approval: ${safety.unattendedAutoApproval ? 'ENABLED (operator acknowledged with --allow-auto)' : 'not enabled'}`,
+    `- Least-privilege permission config: ${safety.permissionConfigPath || '(none)'} - denies external_directory, webfetch, websearch, .env reads, curl/wget. NOT an OS sandbox.`,
+    `- Child environment: ${envLine}`,
+    `- Session database: isolated per run (OPENCODE_DB inside this evidence dir, --standalone required)`,
+    '',
+    '| Criterion | Status | Detail |',
+    '| --- | --- | --- |',
+    ...payload.checks.map((chk) => `| ${chk.id} | ${chk.status} | ${String(chk.detail).replace(/\|/g, '\\|')} |`),
+    '',
+    '## Final report excerpt (first 2000 chars)',
+    '',
+    '```',
+    payload.facts.finalText.slice(0, 2000),
+    '```',
+    '',
+  ];
+  fs.writeFileSync(path.join(evidenceDir, 'report.md'), lines.join('\n'), 'utf8');
 }

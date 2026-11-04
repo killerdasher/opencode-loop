@@ -23,7 +23,7 @@ node scripts/validate.mjs --all
 This runs:
 
 1. **Structural validation** — repository layout, command/skill frontmatter rules, `$ARGUMENTS` and skill-invocation requirements, STAGE 0–8 headings, reference resolution, case-exact link checking, installer behavior markers, documentation completeness, evaluation-framework alignment, the reporting contract (banner, `SETTINGS:`, status vocabulary), and a secret scan.
-2. **Self-test** — proves the validator still catches 19 classes of deliberately broken files. If you change the validator, add a mutation for every new check you add.
+2. **Self-test** — proves the validator still catches every mutation class on the fixed mutation list in `scripts/validate.mjs` (add a mutation whenever you add a check; the list is version-agnostic so this line cannot drift).
 3. **Installer tests** — both installers against temporary directories (never the real OpenCode config): fresh install, idempotency, overwrite refusal, overwrite-with-backup, dry-run, project scope, uninstall.
 
 Then run the behavioral harness self-test (free — no model calls, no network):

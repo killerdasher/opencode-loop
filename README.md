@@ -196,8 +196,17 @@ isolated fixture repository, and judges the result from observable evidence
 (transcript, git diff, an independent re-run of the fixture's tests):
 
 ```sh
-node tests/harness/run-case.mjs --case A --arm loop   # one run (costs model tokens)
+node tests/harness/run-case.mjs --case A --arm loop --allow-auto   # one run (costs model tokens)
 ```
+
+Running an evaluation is an **operator decision**: `--allow-auto` acknowledges
+that the session runs unattended with OpenCode auto-approval, never enabled
+silently. The runner still applies a least-privilege permission config
+(denies: tools touching paths outside the fixture, webfetch, websearch, .env
+reads, curl/wget) and a scrubbed environment (credential variables are not
+inherited) to both A/B arms. There is **no operating-system sandbox** — the
+full isolation model (what is isolated and what is not) is documented in
+[tests/harness/README.md](tests/harness/README.md).
 
 CI runs only the free harness self-test, never model sessions. The A/B
 comparison methodology (standard OpenCode vs LOOP) is specified in

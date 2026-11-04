@@ -8,13 +8,25 @@
  * git diff, harness re-run of the fixture suite), and applies the objective
  * criteria in tests/harness/checks.mjs.
  *
- * Safety guarantees:
- *   - fixtures live in temporary directories; nothing outside them is written
- *   - LOOP is installed into the fixture only (project scope) - the user's
- *     real OpenCode configuration is never modified
+ * Isolation model - what this harness isolates, and what it does NOT. Nothing
+ * here is an operating-system sandbox; the full model lives in
+ * tests/harness/README.md.
+ *   - fixtures are built in temporary directories; the HARNESS itself only
+ *     writes inside them (and the gitignored evidence directory)
+ *   - LOOP is installed into the fixture only (project scope); the user's
+ *     real OpenCode configuration is never a destination
  *   - session data goes to an isolated OPENCODE_DB file inside the evidence
- *     directory, never the user's normal OpenCode database
- *   - no network access is required beyond the model call itself
+ *     directory, via `opencode run --standalone` (non-standalone runs talk to
+ *     the shared background server, whose database is the user's own - so the
+ *     session isolation REQUIRES --standalone)
+ *   - config directory NOT isolated: the user's global OpenCode config still
+ *     merges into the run; the harness layers a least-privilege permission
+ *     config on top through the documented OPENCODE_CONFIG tier
+ *   - the evaluated AGENT is not sandboxed: under unattended auto-approval it
+ *     can read files, run shell commands, and use the network like any
+ *     process the user could run (minus what the least-privilege config and
+ *     the scrubbed environment deny below). Unattended runs therefore require
+ *     an explicit operator acknowledgement: pass --allow-auto.
  *
  * Usage:
  *   node tests/harness/run-case.mjs --case A --arm loop
@@ -30,8 +42,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
-import { parseTranscript, collectDiffFiles } from './transcript.mjs';
+import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
+import { keeperEnv, writePermissionConfig, permissionRules, ISOLATION_DOC } from './safety.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HARNESS_DIR, '..', '..');
@@ -43,7 +56,8 @@ const IS_WINDOWS = process.platform === 'win32';
 
 function parseArgs(argv) {
   const opts = { case: null, arm: 'loop', model: null, keep: false, buildOnly: false,
-    timeout: 900_000, evidence: null, list: false };
+    timeout: 900_000, evidence: null, list: false,
+    allowAuto: false, envPass: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--case') opts.case = String(argv[++i] || '').toUpperCase();
@@ -53,6 +67,10 @@ function parseArgs(argv) {
     else if (a === '--evidence') opts.evidence = argv[++i];
     else if (a === '--keep') opts.keep = true;
     else if (a === '--build-only') opts.buildOnly = true;
+    else if (a === '--allow-auto') opts.allowAuto = true;
+    else if (a === '--env-pass') {
+      opts.envPass.push(...String(argv[++i] || '').split(',').map((s) => s.trim()).filter(Boolean));
+    }
     else if (a === '--list') opts.list = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else { console.error(`Unknown option: ${a}`); printHelp(); process.exit(4); }
@@ -74,7 +92,18 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log('Usage: node tests/harness/run-case.mjs --case <A-I> [--arm loop|control] [--model p/m] [--keep] [--timeout ms] [--evidence dir] [--build-only]');
+  console.log(`Usage: node tests/harness/run-case.mjs --case <A-I> [--arm loop|control] [--model p/m] [--allow-auto] [--env-pass NAME,...] [--keep] [--timeout ms] [--evidence dir] [--build-only]
+
+Safety contract:
+  A model run (anything without --build-only) requires explicit operator
+  acknowledgement: pass --allow-auto to enable OpenCode's unattended auto-
+  approval. Without that flag the runner refuses to start. It is required
+  because --auto approves every permission request OpenCode would otherwise
+  prompt for, and no OS-level sandbox exists - see ${ISOLATION_DOC}.
+  The runner always scrubs the child environment to an allowlist (credential
+  variables are not inherited); --env-pass NAME,... forwards named extra
+  variables (e.g. the provider key your setup authenticates with). Both arms
+  receive identical permission rules and identical env scrubbing.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,40 +139,8 @@ function installLoopIntoFixture(fixtureDir) {
 }
 
 // ---------------------------------------------------------------------------
-// Git evidence: transcript.mjs (parseTranscript, collectDiffFiles)
+// Git evidence: transcript.mjs (parseTranscript, collectDiffFiles, writeReports)
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Evidence reports
-// ---------------------------------------------------------------------------
-
-function writeReports(evidenceDir, payload) {
-  fs.writeFileSync(path.join(evidenceDir, 'report.json'), JSON.stringify(payload, null, 2), 'utf8');
-  const lines = [
-    `# Behavioral run - Case ${payload.case} (${payload.arm} arm)`,
-    '',
-    `- Verdict: **${payload.verdict}**`,
-    `- Date: ${payload.date}`,
-    `- OpenCode: ${payload.opencodeVersion}`,
-    `- Model: ${payload.model}`,
-    `- Session: ${payload.sessionID || 'n/a'}`,
-    `- Fixture: \`${payload.fixtureDir}\``,
-    `- Commands observed: ${payload.facts.bashCommands.length}`,
-    `- Files changed: ${payload.facts.diffFiles.length ? payload.facts.diffFiles.join(', ') : '(none)'}`,
-    '',
-    '| Criterion | Status | Detail |',
-    '| --- | --- | --- |',
-    ...payload.checks.map((chk) => `| ${chk.id} | ${chk.status} | ${String(chk.detail).replace(/\|/g, '\\|')} |`),
-    '',
-    '## Final report excerpt (first 2000 chars)',
-    '',
-    '```',
-    payload.facts.finalText.slice(0, 2000),
-    '```',
-    '',
-  ];
-  fs.writeFileSync(path.join(evidenceDir, 'report.md'), lines.join('\n'), 'utf8');
-}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -151,6 +148,21 @@ function writeReports(evidenceDir, payload) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+
+  // Operator acknowledgement gate: an unattended model run must never enable
+  // unrestricted automatic permission approval silently. --build-only stays
+  // free (no model call, no opencode invocation).
+  if (!opts.buildOnly && !opts.allowAuto) {
+    console.error(`[harness] REFUSING to start a model run without --allow-auto.`);
+    console.error(`[harness] "opencode run --auto" approves every permission request that is not`);
+    console.error(`[harness] explicitly denied, and no OS-level sandbox exists: an unattended agent`);
+    console.error(`[harness] must only ever run over a disposable environment you have accepted`);
+    console.error(`[harness] responsibility for. See ${ISOLATION_DOC}.`);
+    console.error(`[harness] - acknowledge by passing --allow-auto, or use --build-only for the free,`);
+    console.error(`[harness]   model-independent fixture checks.`);
+    process.exit(4);
+  }
+
   const date = new Date().toISOString();
   const stamp = date.replace(/[:.]/g, '-');
   const evidenceDir = opts.buildOnly
@@ -211,18 +223,36 @@ function main() {
   }
 
   // 3. Model run (official automation path) --------------------------------
+  // Safety: unattended auto-approval is opt-in (--allow-auto, checked above)
+  // and always paired with a least-privilege permission config and a scrubbed
+  // child environment. Both arms receive the same treatment so A/B comparisons
+  // stay fair.
+  const permissionConfig = writePermissionConfig(evidenceDir);
+  const { env: isolatedEnv, dropped: droppedEnv } = keeperEnv(process.env, opts.envPass);
+  isolatedEnv.OPENCODE_DB = path.join(evidenceDir, 'session.sqlite');
+  isolatedEnv.OPENCODE_CONFIG = permissionConfig;
+
   const message = opts.arm === 'loop' ? `/loop ${fixture.task}` : fixture.task;
   const args = ['run', '--standalone', '--format', 'json', '--auto', '--title', `loop-eval-${fixture.caseId}-${opts.arm}`];
   if (opts.model) args.push('--model', opts.model);
   args.push(message);
 
   const opencodeVersion = (run('opencode', ['--version']).out || '').trim() || 'unknown';
-  const isolatedDb = path.join(evidenceDir, 'session.sqlite');
+  const isolatedDb = isolatedEnv.OPENCODE_DB;
+  console.log('[harness] unattended-run safety (both arms):');
+  console.log(`[harness]   operator acknowledgement of unattended auto-approval: --allow-auto`);
+  console.log(`[harness]   least-privilege permission config: ${permissionConfig}`);
+  console.log(`[harness]     built-in denies: external_directory, webfetch, websearch, .env reads, curl/wget (NOT an OS sandbox - see ${ISOLATION_DOC})`);
+  const droppedList = droppedEnv.length > 0 ? `${droppedEnv.length} env var(s) not inherited: ${droppedEnv.join(', ')}` : 'env: nothing to drop';
+  console.log(`[harness]   scrubbed environment (${droppedList})`);
+  if (opts.envPass.length > 0) {
+    console.log(`[harness]   operator-approved env forwarding (names only): ${opts.envPass.join(', ')}`);
+  }
   console.log(`[harness] running: opencode ${args.slice(0, -1).join(' ')} "<message>"`);
   const started = Date.now();
   const runResult = run('opencode', args, {
     cwd: fixture.dir,
-    env: { ...process.env, OPENCODE_DB: isolatedDb },
+    env: isolatedEnv,
     timeout: opts.timeout,
   });
   const elapsedMs = Date.now() - started;
@@ -279,6 +309,17 @@ function main() {
     skillLoadObserved: parsed.skillLoadObserved,
     unknownEventTypes: parsed.unknownEventTypes,
     runError,
+    safety: {
+      unattendedAutoApproval: Boolean(opts.allowAuto),
+      permissionConfigPath: path.relative(REPO_ROOT, permissionConfig),
+      permissionRules: permissionRules(),
+      environmentScrubbed: true,
+      // Counts only: the NAMES of dropped variables would disclose which
+      // credentials exist on the machine - and the machine's env inventory
+      // is not report content. Values are never carried anywhere at all.
+      envNotInheritedCount: droppedEnv.length,
+      envForwardedByOperator: [...opts.envPass],
+    },
     checks,
     facts: { ...facts, timeline: undefined, allText: undefined, finalText: facts.finalText.slice(0, 8000) },
   };

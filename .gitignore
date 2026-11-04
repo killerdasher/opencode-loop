@@ -16,7 +16,8 @@ node_modules/
 .env
 .env.*
 
-# Installer backups (created next to replaced files)
+# Installer backups (kept in <install-root>-loop-backups siblings; legacy
+# in-place backups from older installer versions are still ignored)
 *.backup-*
 
 # Test scratch space

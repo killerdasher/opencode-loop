@@ -55,8 +55,10 @@ fixtures.mjs ──builds──▶ isolated git fixture (temp/evidence dir, isol
      ▼
 run-case.mjs ──arm setup──▶ loop: install LOOP (project scope, committed to baseline)
      │                      control: no LOOP
-     │  opencode run --standalone --format json --auto   (official documented automation path)
-     ▼
+     │  opencode run --standalone --format json --auto   (official documented automation path,
+     │  gated by the --allow-auto operator acknowledgement, a least-privilege permission config
+     │  delivered via OPENCODE_CONFIG, and a scrubbed child environment — no OS sandbox; see the
+     ▼  isolation model in tests/harness/README.md)
 transcript.mjs ◀── transcript.ndjson + git status --porcelain
      │             (timeline: bash/write/text/obs; unknown event shapes surfaced, not dropped)
      ▼
@@ -70,7 +72,8 @@ Key properties:
 
 - **The harness, not the agent, judges tests** — the fixture suite is re-run after the session.
 - **`REVIEW` is first-class** — criteria needing human judgment never auto-promote to `PASS`; adjudication is recorded next to the evidence.
-- **Free self-test** (`selftest.mjs`, run in CI) proves fixtures build, seeds are real, criteria can fail, and the evidence parsers hold against every defect found in pilot runs.
+- **Free self-test** (`selftest.mjs`, run in CI) proves fixtures build, seeds are real, criteria can fail, the evidence parsers hold against every defect found in pilot runs, and the unattended-run safety contract holds (acknowledgement gate, env allowlist, least-privilege permission rules).
+- **Honest isolation taxonomy** — the harness isolates what it legitimately can (fixture as a destination of harness actions, per-run session DB via `OPENCODE_DB` + `--standalone`, verify against run artifacts) and documents what it deliberately does not (the user's global config still merges in; there is no OS sandbox). Unattended auto-approval is opt-in via `--allow-auto`; the permission config then hard-denies external-directory access, generic web fetching, `curl`/`wget`, and `.env` reads for both arms.
 - **Runs cost model tokens** — manual, one case at a time; CI never runs them.
 
 The A/B comparison protocol (standard OpenCode vs LOOP) is specified in `tests/comparison.md` and has **no results yet** — one loop-arm pilot (Case A) exists; no control-arm runs.
@@ -80,7 +83,7 @@ The A/B comparison protocol (standard OpenCode vs LOOP) is specified in `tests/c
 `scripts/validate.mjs` has three modes, all zero-dependency:
 
 - **Structural** — required files, command/skill frontmatter rules (name format, directory match, description length, `$ARGUMENTS`, skill invocation, no forced agent), STAGE 0–8 headings, reference resolution, case-exact relative-link checking, installer behavior markers, optional `bash -n` / PowerShell parse syntax checks (skipped with a `SKIP` line when no runtime exists), CI wiring (including the harness self-test step), doc completeness (including changelog currency and evaluation-framework alignment), the reporting contract (banner, `SETTINGS:`, status vocabulary), and a secret-pattern scan.
-- **`--self-test`** — copies the repository to a temp directory, applies 19 known corruptions (missing `$ARGUMENTS`, invalid skill name, broken links, injected secret, dropped reporting contract, drifted evaluation cases, …), and asserts the structural validator fails on exactly the expected check. This guards against a validator that always passes.
+- **`--self-test`** — copies the repository to a temp directory, applies the fixed mutation list at the bottom of this script (one deliberate corruption per structural check: missing `$ARGUMENTS`, invalid skill name, broken links, injected secret, dropped reporting contract, drifted evaluation cases, dropped runner-safety gate, …), and asserts the structural validator fails on exactly the expected check. This guards against a validator that always passes.
 - **`--install-test`** — runs both installers end to end in temp directories with `XDG_CONFIG_HOME` redirected: fresh install → idempotent rerun → refusal to overwrite differing files → overwrite-with-backup → dry-run (no changes) → project scope → uninstall-with-backup. The real user configuration is never a test destination.
 
 CI (`.github/workflows/validate.yml`) runs all three modes plus `tests/harness/selftest.mjs` on `ubuntu-latest` and `windows-latest`, so both installers execute under both platforms' shells (GitHub runners ship bash on Windows and pwsh on Linux).

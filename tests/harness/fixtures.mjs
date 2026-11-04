@@ -2,9 +2,12 @@
  * Fixture builder for the LOOP behavioral evaluation cases (A-I).
  *
  * Zero dependencies (Node built-ins + git only). Every fixture is a small,
- * synthetic git repository built fresh inside a temporary directory: no user
- * data, no network access, no writes outside the fixture directory. The user's
- * real OpenCode configuration is never a destination.
+ * synthetic git repository built fresh inside a temporary directory. This
+ * comment describes the HARNESS's own construction actions: no user data is
+ * read, no network is used, and the harness writes only inside the fixture
+ * directory and the gitignored evidence directory. It does NOT describe the
+ * evaluated agent's capabilities during a run — see tests/harness/README.md
+ * and safety.mjs for the unattended-run isolation model.
  *
  * Each fixture declares:
  *   - task        : the exact prompt handed to the agent under test

@@ -19,9 +19,9 @@ this design.
 | Task text | byte-identical prompt (`fixture.task` from `fixtures.mjs`; loop arm prefixes `/loop `) |
 | Repository snapshot | same fixture builder, same baseline commit content, built fresh per run |
 | Model | pin with `--model provider/model` for both arms; record the resolved model in `report.json` |
-| Tools & permissions | both arms run `opencode run --standalone --format json --auto` |
+| Tools & permissions | both arms gated identically: `--allow-auto` acknowledgement, same least-privilege permission config (`opencode.permissions.json`), same auto-approval semantics |
 | Verification conditions | same fixture test command, re-run by the harness after the session (never by agent claim alone) |
-| Environment | same machine, same OpenCode version, isolated `OPENCODE_DB` per run |
+| Environment | same machine, same OpenCode version, identical scrubbed child environment (`keeperEnv` allowlist), isolated `OPENCODE_DB` + standalone server per run |
 
 The one intended difference: the loop arm has LOOP installed (command +
 skill) and is prompted `/loop <task>`; the control arm has neither.
@@ -64,13 +64,43 @@ must not be presented as outcomes.
 2. Build the comparison set: choose cases (start with A, C, D, H — the ones
    with fully automatic criteria).
 3. For each case × arm × N: `node tests/harness/run-case.mjs --case <X>
-   --arm <control|loop> --model <p/m>` with `--keep` for adjudication.
+   --arm <control|loop> --model <p/m> --allow-auto` with `--keep` for
+   adjudication. `--allow-auto` is required for any model run (operator
+   acknowledgement of unattended auto-approval); the safety contract applies
+   identically to both arms, so it does not differ between arms.
 4. Adjudicate every `REVIEW` checkpoint into `ADJUDICATION.md` before any
    metric is computed. Unadjudicated checkpoints are reported as
    `pending adjudication`, never assumed favorable.
 5. Fill the metric table per run; aggregate distributions per arm.
 6. Report results per case. A case where one arm is `BLOCKED`/`not run` is
    reported as such — excluded from the comparison, not imputed.
+
+### 3a. Solo-maintainer low-cost first comparison (recommended)
+
+A solo maintainer cannot afford a large matrix; the following is the minimum
+sequence that produces an honest pilot without pretending to statistical
+power. Real runs require the `--allow-auto` acknowledgement (unattended
+auto-approval, opt-in by design) and each run costs model tokens.
+
+| Batch | Runs | Why these |
+| --- | --- | --- |
+| Batch 1 | Case A loop, Case A control, Case C loop, Case C control (4 runs) | A and C have the most fully automatic criteria; four runs answer "does anything change at all" |
+| Batch 2 (only if Batch 1 shows no harm) | Case D loop/control, Case H loop/control (4 runs) | D checks user-work preservation, H checks scope discipline |
+
+Rules for solo execution:
+
+- Pin `--model` once and use it for every run in this comparison; never
+  change the model between batches 1 and 2.
+- Run each case's two arms back-to-back, same machine, same day - then wait
+  for adjudication before the next case. Do not interleave arms across days.
+- One run per arm per case = a *pilot* (report as observation, no comparative
+  claim - see §1). Batch 1+2 together (8 runs) still only rates as a pilot;
+  N≥2 per arm per case is required before any pass-rate is derived.
+- `--keep` every run; adjudicate `REVIEW` checkpoints into
+  `ADJUDICATION.md` before computing any metric (protocol §3 step 4).
+- Before and after the batch: `node tests/harness/selftest.mjs` must be green.
+- Stop the experiment the moment a run produces an automatic `FAIL` verdict
+  for a safety metric (metric 10) - that finding outranks any comparison.
 
 ## 4. Reporting rules
 
@@ -89,7 +119,8 @@ must not be presented as outcomes.
 | --- | --- |
 | Methodology | defined (this document) |
 | Harness implementing the protocol | implemented; free self-test green (`selftest.mjs`) |
-| Loop-arm runs | 1 × Case A pilot → `PASS` after adjudication (`evidence/2026-11-02T20-55-27-003Z-caseA-loop/`) |
+| Runner safety contract (v0.3.1) | implemented; unattended runs require the `--allow-auto` acknowledgement, least-privilege permission config + scrubbed child environment applied identically to both arms (validator-checked, self-tested) |
+| Loop-arm runs | 1 × Case A pilot → `PASS` after adjudication (`evidence/2026-11-02T20-55-27-003Z-caseA-loop/`); pre-dates the v0.3.1 safety contract |
 | Control-arm runs | **0 — no A/B comparison has been executed** |
 | Comparative results | **none. No claim about LOOP vs standard execution is supported yet.** |
 
