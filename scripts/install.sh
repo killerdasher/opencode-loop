@@ -123,6 +123,10 @@ else
   fi
 fi
 
+# Backup root: sibling of DEST_ROOT, never inside it (see unique_backup_path
+# for why backups must stay out of OpenCode's extension discovery directories).
+BACKUP_ROOT="$(dirname "$DEST_ROOT")/$(basename "$DEST_ROOT")-loop-backups"
+
 DEST_COMMAND="$DEST_ROOT/commands/loop.md"
 DEST_SKILL_DIR="$DEST_ROOT/skills/loop-engine"
 
@@ -139,21 +143,28 @@ dirs_identical() { diff -rq "$1" "$2" >/dev/null 2>&1; }
 
 unique_backup_path() {
   # $1 = path being backed up; never returns an existing path (same-second runs
-  # must not clobber an earlier backup).
-  local base="$1.backup-$TIMESTAMP"
+  # must not clobber an earlier backup). Backups live in BACKUP_ROOT - a
+  # sibling of DEST_ROOT, never inside it: OpenCode scans <config>/commands and
+  # <config>/skills for extension files, so an in-place "loop-engine.backup-*"
+  # directory (which contains a live SKILL.md) is discovered as a phantom
+  # skill - observed 2026-11-04. Tree structure is preserved inside the root:
+  # <BACKUP_ROOT>/<TIMESTAMP>/<path relative to DEST_ROOT>.
+  local rel="${1#"$DEST_ROOT/"}"
+  local base="$BACKUP_ROOT/$TIMESTAMP/$rel"
   local candidate="$base"
   local i=2
   while [ -e "$candidate" ]; do
     candidate="$base-$i"
     i=$((i + 1))
   done
+  mkdir -p "$(dirname "$candidate")"
   printf '%s' "$candidate"
 }
 
 backup_and_remove() {
   # $1 = path to back up and remove
   if [ "$DRYRUN" -eq 1 ]; then
-    note "DRY RUN: would back up $1 -> $1.backup-$TIMESTAMP and remove it."
+    note "DRY RUN: would back up $1 -> $BACKUP_ROOT/$TIMESTAMP/${1#"$DEST_ROOT/"} and remove it."
     return 0
   fi
   local backup
@@ -178,7 +189,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   elif [ "$removed" -eq 0 ]; then
     note "Nothing to uninstall; no LOOP files were present."
   else
-    note "Uninstall complete ($removed item(s) removed, backups kept next to the originals)."
+    note "Uninstall complete ($removed item(s) removed, backups kept in $BACKUP_ROOT)."
     note "Backups can be deleted manually when no longer needed."
   fi
   exit 0

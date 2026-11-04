@@ -119,7 +119,7 @@ Installs to `${XDG_CONFIG_HOME:-$HOME/.config}/opencode` by default.
 ### What installation does
 
 - Copies `loop.md` into `commands/` and the `loop-engine` skill into `skills/`.
-- **Never silently overwrites.** If a target file already exists and is identical, it is skipped (idempotent). If it differs, installation refuses and tells you why — unless you pass `-Overwrite` / `--overwrite`, which creates a timestamped `.backup-<timestamp>` copy first.
+- **Never silently overwrites.** If a target file already exists and is identical, it is skipped (idempotent). If it differs, installation refuses and tells you why - unless you pass `-Overwrite` / `--overwrite`, which creates a timestamped backup first. Backups go to a sibling of the install root (`<root>-loop-backups\<timestamp>\...`), never inside `<root>/commands` or `<root>/skills`, so an OpenCode extension discovery scan cannot resurrect a replaced revision (a SKILL.md backup inside `skills/` is discovered as a live skill).
 - Supports a dry run (`-DryRun` / `--dry-run`) that prints actions without changing anything.
 - Supports uninstall (`-Uninstall` / `--uninstall`), which backs up before removing.
 

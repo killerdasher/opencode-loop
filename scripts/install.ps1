@@ -97,6 +97,13 @@ else {
 $destCommand = Join-Path $destRoot 'commands\loop.md'
 $destSkillDir = Join-Path $destRoot 'skills\loop-engine'
 
+# Backup root: a sibling of the destination, NEVER inside it. OpenCode scans
+# <config>/commands and <config>/skills for extension files, so an in-place
+# "loop-engine.backup-<timestamp>" directory - which contains a live SKILL.md -
+# is discovered as a phantom skill (observed 2026-11-04). Tree structure is
+# preserved inside the root: <root>\<timestamp>\<path relative to destRoot>.
+$BackupRoot = Join-Path (Split-Path -Parent $destRoot) ((Split-Path -Leaf $destRoot) + '-loop-backups')
+
 Write-Note "Scope: $Scope"
 Write-Note "Destination: $destRoot"
 if ($DryRun) { Write-Note 'DRY RUN - no files will be changed.' }
@@ -120,20 +127,33 @@ function Test-DirIdentical([string]$Source, [string]$Destination) {
     return $true
 }
 
+function Get-BackupBasePath([string]$Path) {
+    # Path of the backup this installer run would create, tree structure
+    # preserved: <BackupRoot>\<timestamp>\<path relative to destRoot>.
+    $rel = $Path.Substring($destRoot.Length).TrimStart('\', '/')
+    return (Join-Path $BackupRoot (Join-Path $timestamp $rel))
+}
+
 function Get-UniqueBackupPath([string]$Path) {
-    $base = "$Path.backup-$timestamp"
+    # Returns an existing-path-safe backup destination: same-second runs must
+    # not clobber an earlier backup of the same file.
+    $base = Get-BackupBasePath $Path
     $candidate = $base
     $i = 2
     while (Test-Path -LiteralPath $candidate) {
         $candidate = "$base-$i"
         $i++
     }
+    $parent = Split-Path -Parent $candidate
+    if (-not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
     return $candidate
 }
 
 function Backup-Then-Remove([string]$Path) {
     if ($DryRun) {
-        Write-Note "DRY RUN: would back up $Path -> $Path.backup-$timestamp and remove it."
+        Write-Note "DRY RUN: would back up $Path -> $(Get-BackupBasePath $Path) and remove it."
         return $null
     }
     $backup = Get-UniqueBackupPath $Path
@@ -160,7 +180,7 @@ if ($Uninstall) {
         Write-Note 'Nothing to uninstall; no LOOP files were present.'
     }
     else {
-        Write-Note "Uninstall complete ($removed item(s) removed, backups kept next to the originals)."
+        Write-Note "Uninstall complete ($removed item(s) removed, backups kept in $BackupRoot)."
         Write-Note 'Backups can be deleted manually when no longer needed.'
     }
     exit 0

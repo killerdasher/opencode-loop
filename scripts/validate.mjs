@@ -840,16 +840,38 @@ function runInstallTests(root) {
       const r = run(args);
       assert(r.status === 0, `exit ${r.status}: ${r.out}`);
       assert(fs.readFileSync(destCommand, 'utf8') === fs.readFileSync(srcCommand, 'utf8'), 'file not restored to source content');
-      const backups = fs.readdirSync(path.dirname(destCommand)).filter((f) => f.startsWith('loop.md.backup-'));
-      assert(backups.length >= 1, 'no backup created');
+      // Backups must live OUTSIDE OpenCode's extension discovery directories
+      // (commands/, skills/): an in-place backup directory of the skill was
+      // discovered by OpenCode as a phantom skill after 0.3.0 (ghost of the
+      // replaced version). Regrooted backups belong in the sibling root.
+      const backupsRoot = path.join(xdg, 'opencode-loop-backups');
+      assert(fs.existsSync(backupsRoot), `backup root not created: ${backupsRoot}`);
+      let foundBackup = false;
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (path.basename(p) === 'loop.md') { foundBackup = true; return; }
+        }
+      };
+      walk(backupsRoot);
+      assert(foundBackup, `no backup of the replaced file kept under ${backupsRoot}`);
+      for (const scanDir of [path.join(xdg, 'opencode', 'commands'), path.join(xdg, 'opencode', 'skills')]) {
+        const leftovers = fs.readdirSync(scanDir).filter((f) => /backup/i.test(f));
+        assert(leftovers.length === 0, `backup left inside discovery dir ${path.basename(path.dirname(scanDir))}: ${leftovers.join(' | ')}`);
+      }
     });
 
     scenario('overwrite-preserves-existing-backups', () => {
-      // Pre-create marker backups covering a 60-second timestamp window. The
-      // installer must never clobber an existing backup, even within the same
-      // second as a previous run.
+      // Pre-create markers covering a 60-second timestamp window, in BOTH
+      // places the installer has ever used for backups: legacy in-place
+      // backups next to the original (from older installer versions - user
+      // content that must never be touched) and the current backup root.
+      // The installer must never clobber an existing backup.
       const dir = path.dirname(destCommand);
-      const markers = [];
+      const backupsRoot = path.join(xdg, 'opencode-loop-backups');
+      const legacyMarkers = [];
+      const rootMarkers = [];
       const nowSec = Math.floor(Date.now() / 1000);
       const pad = (n) => String(n).padStart(2, '0');
       const formatTs = (sec) => {
@@ -857,19 +879,36 @@ function runInstallTests(root) {
         return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
       };
       for (let i = -10; i < 50; i++) {
-        const p = path.join(dir, `loop.md.backup-${formatTs(nowSec + i)}`);
-        fs.writeFileSync(p, 'MARKER-DO-NOT-CLOBBER');
-        markers.push(p);
+        const legacy = path.join(dir, `loop.md.backup-${formatTs(nowSec + i)}`);
+        fs.writeFileSync(legacy, 'MARKER-DO-NOT-CLOBBER');
+        legacyMarkers.push(legacy);
+        const inRoot = path.join(backupsRoot, formatTs(nowSec + i), 'commands', 'loop.md');
+        fs.mkdirSync(path.dirname(inRoot), { recursive: true });
+        fs.writeFileSync(inRoot, 'MARKER-DO-NOT-CLOBBER');
+        rootMarkers.push(inRoot);
       }
       fs.writeFileSync(destCommand, 'TAMPERED-AGAIN\n');
       const args = kind === 'ps1' ? ['-Overwrite'] : ['--overwrite'];
       const r = run(args);
       assert(r.status === 0, `exit ${r.status}: ${r.out}`);
       assert(fs.readFileSync(destCommand, 'utf8') === fs.readFileSync(srcCommand, 'utf8'), 'file not restored');
-      for (const p of markers) {
+      for (const p of [...legacyMarkers, ...rootMarkers]) {
         assert(fs.readFileSync(p, 'utf8') === 'MARKER-DO-NOT-CLOBBER', `existing backup clobbered: ${path.basename(p)}`);
       }
-      for (const p of markers) fs.rmSync(p, { force: true });
+      // The fresh backup must have landed at a unique sibling of the blocked
+      // same-timestamp marker (e.g. <stamp>/commands/loop.md-2), still outside
+      // the discovery directories, preserving the content that was replaced.
+      let foundReplaced = false;
+      const walkFresh = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walkFresh(p);
+          else if (/^loop\.md(-\d+)?$/.test(path.basename(p)) && fs.readFileSync(p, 'utf8') === 'TAMPERED-AGAIN\n') { foundReplaced = true; return; }
+        }
+      };
+      walkFresh(backupsRoot);
+      assert(foundReplaced, 'fresh backup not found as a unique sibling of the marker, or wrong content');
+      for (const p of legacyMarkers) fs.rmSync(p, { force: true });
     });
 
     scenario('dry-run-changes-nothing', () => {
@@ -889,13 +928,32 @@ function runInstallTests(root) {
     });
 
     scenario('uninstall-removes-with-backup', () => {
+      // Runs last on the shared xdg: discard earlier scenarios' backups so the
+      // assertions below prove what THIS uninstall run kept.
+      fs.rmSync(path.join(xdg, 'opencode-loop-backups'), { recursive: true, force: true });
       const args = kind === 'ps1' ? ['-Uninstall'] : ['--uninstall'];
       const r = run(args);
       assert(r.status === 0, `exit ${r.status}: ${r.out}`);
       assert(!fs.existsSync(destCommand), 'loop.md still present after uninstall');
       assert(!fs.existsSync(destSkill), 'skill dir still present after uninstall');
-      const backups = fs.readdirSync(path.dirname(destCommand)).filter((f) => f.startsWith('loop.md.backup-'));
-      assert(backups.length >= 1, 'no uninstall backup kept');
+      const backupsRoot = path.join(xdg, 'opencode-loop-backups');
+      assert(fs.existsSync(backupsRoot), `no uninstall backup root kept: ${backupsRoot}`);
+      // The uninstall backup must keep the loop.md content; the discovery
+      // directories must stay free of backup-shaped leftovers.
+      let foundBackup = false;
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (path.basename(p) === 'loop.md') { foundBackup = true; return; }
+        }
+      };
+      walk(backupsRoot);
+      assert(foundBackup, `no uninstall backup kept under ${backupsRoot}`);
+      for (const scanDir of [path.join(xdg, 'opencode', 'commands'), path.join(xdg, 'opencode', 'skills')]) {
+        const leftovers = fs.readdirSync(scanDir).filter((f) => /backup/i.test(f));
+        assert(leftovers.length === 0, `backup left inside discovery dir after uninstall: ${leftovers.join(' | ')}`);
+      }
     });
   };
 

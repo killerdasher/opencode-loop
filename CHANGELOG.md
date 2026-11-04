@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Behavioral harness on POSIX: `runFixtureTest` executed the fixture's command string with `shell: false` on non-Windows platforms, so `spawnSync` treated the whole string (`node test/x.test.mjs`) as a single filename — every seeded-state check failed with `ERROR` on ubuntu CI while Windows passed (first CI run to execute the harness self-test on Linux). Commands now run through a shell on every platform, with a pre-flight executable probe (`where` / `command -v`) so a missing executable stays an `ERROR` (broken environment) and can never be misread as a `FAIL` (red suite). Two free self-test checks guard both behaviors.
+- Installers (`install.ps1`, `install.sh`): timestamped backups were created **in place** — `commands/loop.md.backup-<ts>` and, for the skill, `skills/loop-engine.backup-<ts>` — but OpenCode discovers every directory containing a `SKILL.md` under `skills/`, so the overlaid backup came back as a phantom skill (the just-replaced version, live again). Observed with a real overwrite install on 2026-11-04. Backups now go to a sibling root (`<dest>-loop-backups\<timestamp>\<tree>`) outside all discovery directories, tree structure preserved; legacy in-place backups from older installers are left untouched. Installer tests assert the new location and that no `*backup*` residue remains inside `commands/` or `skills/`.
 
 ## [0.3.0] - 2026-11-03
 
