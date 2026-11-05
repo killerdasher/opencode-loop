@@ -34,6 +34,7 @@ const REQUIRED_FILES = [
   'scripts/install.ps1',
   'scripts/install.sh',
   'scripts/validate.mjs',
+  'scripts/continuity.mjs',
   'tests/evaluation.md',
   'tests/comparison.md',
   'tests/harness/README.md',
@@ -364,6 +365,7 @@ function validateRepo(root) {
       ['dry-run support', /DryRun/],
       ['command artifact', /loop\.md/],
       ['skill artifact', /loop-engine/],
+      ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /'project'/],
     ];
     const missing = markers.filter(([, re]) => !re.test(ps1)).map(([label]) => label);
@@ -384,10 +386,36 @@ function validateRepo(root) {
       ['dry-run support', /--dry-run/],
       ['command artifact', /loop\.md/],
       ['skill artifact', /loop-engine/],
+      ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /--project/],
     ];
     const missing = markers.filter(([, re]) => !re.test(sh)).map(([label]) => label);
     push('installer:sh:content', missing.length === 0, missing.length === 0 ? 'all behavior markers present' : `missing: ${missing.join(', ')}`);
+  }
+
+  // -- Continuity helper (ADR 0002) -----------------------------------------
+  // Deterministic helper tier. The file must stay offline (no network calls),
+  // dependency-free (only node: builtins), and must carry the honest status
+  // vocabulary plus the best-effort secret-scan limitation language.
+  const continuity = readIfExists(path.join(root, 'scripts/continuity.mjs'));
+  const pushContinuity = (id, ok, detail = '') => push(`continuity:${id}`, ok, detail);
+  if (continuity === null) {
+    pushContinuity('file-content', false, 'scripts/continuity.mjs missing');
+  } else {
+    const nonBuiltin = [...continuity.matchAll(/^\s*(?:import\s.+?from\s+|const\s.+?=\s*require\()\s*['"]([^'"]+)['"]/gm)]
+      .map((m) => m[1]).filter((spec) => !spec.startsWith('node:') && !spec.startsWith('.'));
+    pushContinuity('zero-dep', nonBuiltin.length === 0,
+      nonBuiltin.length === 0 ? 'all imports are node: builtins or relative' : `non-builtin imports: ${nonBuiltin.join(', ')}`);
+    const networkCalls = /[^.\w\u0170](?:fetch\s*\(|got\s*\(|axios|node-fetch|https?\.request|net\.connect)/.test(continuity);
+    pushContinuity('no-network', !networkCalls, networkCalls ? 'looks like a network call' : 'no network primitives');
+    const vocab = ['ACTIVE', 'PAUSED', 'RECOVERY_REQUIRED', 'BLOCKED', 'COMPLETED', 'CANCELLED',
+      'VALID', 'SUSPECTED_STALE', 'CORRUPT'];
+    const missingVocab = vocab.filter((s) => !continuity.includes(s));
+    pushContinuity('status-vocabulary', missingVocab.length === 0,
+      missingVocab.length === 0 ? 'run + integrity vocabulary present' : `missing: ${missingVocab.join(', ')}`);
+    const honestLimits = /best-effort/i.test(continuity) && /never\s+be\s+described\s+as\s+(complete|proof)/i.test(continuity)
+      && /best-effort, never complete/i.test(continuity);
+    pushContinuity('limits-documented', honestLimits, honestLimits ? 'best-effort limitation language present' : 'secret-scan limitation language missing');
   }
 
   for (const r of syntaxChecks(root)) res.push(r);

@@ -32,7 +32,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
 import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
@@ -73,7 +73,7 @@ function checkStatus(meta, f, checkId) {
   return found ? found.status : 'MISSING';
 }
 
-function main() {
+async function main() {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-harness-selftest-'));
   const built = [];
 
@@ -464,6 +464,293 @@ function main() {
   check('verdict:safety-violation-is-FAIL', v2.verdict === STATUS.FAIL, `verdict=${v2.verdict}`);
 
   // ---------------------------------------------------------------------
+  // 4b. Continuity helper (P1, ADR 0002) - tests the REAL implementation
+  //     imported from scripts/continuity.mjs, never a mirrored model.
+  //     Covers: schema/transition/identity validation, atomic-write recovery,
+  //     archive retention, secret refusal, CLI exit-code contract.
+  // ---------------------------------------------------------------------
+  const continuityPath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'continuity.mjs');
+  const C = await import(pathToFileURL(continuityPath).href);
+
+  const liveFile = (dir) => path.join(dir, '.loop', 'continuity.json');
+  const contProject = (tag) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `loop-cont-${tag}-`));
+    return dir;
+  };
+
+  // init: creates an ACTIVE gen-1 state
+  {
+    const d = contProject('init');
+    const r = C.opInitialize(d, { objective: 'P1 unit run' });
+    check('continuity:init-creates-active',
+      r.ok && r.state.status === 'ACTIVE' && r.state.integrity === 'VALID'
+      && r.state.generation === 1 && r.state.schemaVersion === C.SCHEMA_VERSION
+      && fs.existsSync(liveFile(d)),
+      r.ok ? `gen=${r.state.generation}` : JSON.stringify(r));
+    const again = C.opInitialize(d, { objective: 'duplicate refusal' });
+    check('continuity:init-refuses-existing-run',
+      again.ok === false && again.reason.includes('refusing to overwrite'),
+      again.ok ? 'accepted (!)' : again.reason);
+  }
+
+  // runtime pause/resume through the real transition path bumps generation
+  {
+    const d = contProject('rt');
+    const started = C.opInitialize(d, { objective: 'generation subject' });
+    const paused = C.opTransition(d, 'pause', { reason: 'operator' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:pause-bumps-generation',
+      started.ok && paused.ok && paused.state.status === 'PAUSED'
+      && started.state.generation === 1 && inspect.state.generation === 2,
+      `gen ${started.state.generation}->${inspect.state.generation}`);
+    const resumed = C.opTransition(d, 'resume');
+    const resumedInspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:resume-returns-to-active',
+      resumed.ok && resumed.state.status === 'ACTIVE' && resumedInspect.state.generation === 3);
+  }
+
+  // corrupt JSON: CORRUPT integrity, refuse-not-wipe (byte-for-byte preservat.
+  {
+    const d = contProject('corrupt');
+    const r = C.opInitialize(d, { objective: 'victim run' });
+    const original = fs.readFileSync(liveFile(d), 'utf8');
+    fs.writeFileSync(liveFile(d), '{"schemaVersion": 1, "truncat');
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const after = fs.readFileSync(liveFile(d), 'utf8');
+    check('continuity:corrupt-json-flagged',
+      inspect.readStatus === 'unparseable' && inspect.integrity === 'CORRUPT'
+      && inspect.identity === 'unknown',
+      JSON.stringify(inspect.readStatus));
+    check('continuity:corrupt-never-overwritten',
+      after === '{"schemaVersion": 1, "truncat',
+      'file content preserved in place, untouched by inspection');
+    const opStart = C.opTransition(d, 'pause');
+    check('continuity:corrupt-transition-blocked',
+      opStart.ok === false && opStart.blocked === true,
+      `reason: ${opStart.reason || ''}`);
+    // restoring the original bytes restores a VALID state: no data was lost
+    fs.writeFileSync(liveFile(d), original);
+    check('continuity:corrupt-recoverable-restored',
+      C.inspectState(d, { expectedRoot: d }).readStatus === 'ok');
+  }
+
+  // unsupported schema version: rejected, never silently downgraded/emptied
+  {
+    const d = contProject('schema');
+    const future = JSON.stringify(C.createState({ objective: 'future version' }), null, 2).replace('"schemaVersion": 1', '"schemaVersion": 99');
+    fs.mkdirSync(path.join(d, '.loop'), { recursive: true });
+    fs.writeFileSync(liveFile(d), future);
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const after = fs.readFileSync(liveFile(d), 'utf8');
+    check('continuity:unsupported-schema-rejected',
+      inspect.readStatus === 'unsupported-schema-version' && inspect.integrity === 'CORRUPT',
+      JSON.stringify(inspect.readStatus));
+    check('continuity:unsupported-schema-preserved', after === future, 'bytes identical');
+  }
+
+  // documented transition table: every documented pair succeeds
+  {
+    const documented = [
+      ['ACTIVE', 'pause', 'PAUSED'],
+      ['ACTIVE', 'block', 'BLOCKED'],
+      ['ACTIVE', 'recovery-flag', 'RECOVERY_REQUIRED'],
+      ['ACTIVE', 'complete', 'COMPLETED'],
+      ['ACTIVE', 'cancel', 'CANCELLED'],
+      ['PAUSED', 'resume', 'ACTIVE'],
+      ['PAUSED', 'block', 'BLOCKED'],
+      ['PAUSED', 'recovery-flag', 'RECOVERY_REQUIRED'],
+      ['PAUSED', 'cancel', 'CANCELLED'],
+      ['RECOVERY_REQUIRED', 'resolve-recovery', 'ACTIVE'],
+      ['RECOVERY_REQUIRED', 'cancel', 'CANCELLED'],
+      ['BLOCKED', 'unblock', 'ACTIVE'],
+      ['BLOCKED', 'cancel', 'CANCELLED'],
+      ['ABSENT', 'init', 'ACTIVE'],
+    ];
+    const bad = documented.filter(([from, ev, to]) => {
+      const t = C.checkTransition(from, ev);
+      return !(t.ok && t.to === to);
+    });
+    check('continuity:transitions-table-complete', bad.length === 0, bad.length ? JSON.stringify(bad) : `${documented.length} documented transitions`);
+  }
+
+  // invalid transitions are ERRORS (never silent no-ops)
+  {
+    const invalid = [
+      ['COMPLETED', 'pause'], ['COMPLETED', 'cancel'], ['COMPLETED', 'complete'],
+      ['CANCELLED', 'resume'], ['CANCELLED', 'cancel'], ['PAUSED', 'complete'],
+      ['ACTIVE', 'bogus-event'], ['ACTIVE', 'unblock'],
+    ];
+    const bad = invalid.filter(([from, ev]) => C.checkTransition(from, ev).ok);
+    check('continuity:invalid-transitions-error', bad.length === 0, bad.length ? JSON.stringify(bad) : 'all invalid pairs rejected');
+  }
+
+  // terminal states archive and are RETAINED across new runs (never deleted)
+  {
+    const d = contProject('archive');
+    C.opInitialize(d, { objective: 'first doomed run' });
+    const cancelled = C.opTransition(d, 'cancel', { reason: 'owner stopped it' });
+    const liveGone = !fs.existsSync(liveFile(d));
+    const archive = path.join(d, '.loop', 'archive', `${cancelled.state.taskId}.json`);
+    const archivedOk = fs.existsSync(archive)
+      && JSON.parse(fs.readFileSync(archive, 'utf8')).stopReason === 'owner stopped it';
+    const second = C.opInitialize(d, { objective: 'fresh second run' });
+    const retained = fs.readdirSync(path.join(d, '.loop', 'archive')).length === 1;
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:cancel-archives',
+      cancelled.ok && cancelled.archived === true && liveGone && archivedOk,
+      `archived=${cancelled.ok && !!cancelled.archived} liveGone=${liveGone}`);
+    check('continuity:archive-retained-terminal-evidence',
+      second.ok && retained && inspect.state.taskId !== cancelled.state.taskId,
+      `second run gen ${inspect.state.generation}, archive intact`);
+  }
+
+  // RECOVERY_REQUIRED round-trip on the real file
+  {
+    const d = contProject('recovery');
+    C.opInitialize(d, { objective: 'recovery subject' });
+    const flagged = C.opTransition(d, 'recovery-flag', { reason: 'uncommitted work beyond checkpoint' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:recovery-flag-persists',
+      flagged.ok && inspect.state.status === 'RECOVERY_REQUIRED'
+      && inspect.state.recovery && inspect.state.recovery.reason === 'uncommitted work beyond checkpoint',
+      `status=${inspect.state.status}`);
+    const resolved = C.opTransition(d, 'resolve-recovery');
+    const resolvedInspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:recovery-resolve-back-to-active',
+      resolved.ok && resolvedInspect.state.status === 'ACTIVE'
+      && resolvedInspect.state.integrity === 'VALID');
+  }
+
+  // secret-shaped values are refused before anything is written
+  // Fake credential shapes are ASSEMBLED at runtime so the file text itself
+  // never contains a full match for the repo-wide secret scanner.
+  {
+    const fakeGh = 'ghp_' + '0123456789abcdef'.repeat(2) + 'abcd';
+    const fakeAnt = 'sk-ant-' + 'a'.repeat(40);
+    const dGh = contProject('secrets-gh');
+    const sGh = C.opInitialize(dGh, { objective: `run with ${fakeGh} inside` });
+    const dPw = contProject('secrets-pw');
+    const sPw = C.opInitialize(dPw, { objective: 'rotate password ZgL6vJ7pQ3dK1mZx9tRa tonight' });
+    const dOk = contProject('secrets-clean');
+    const sOk = C.opInitialize(dOk, { objective: 'Fix range parser off-by-one' });
+    check('continuity:secret-shaped-values-refused',
+      sGh.ok === false && sGh.blocked === true && !fs.existsSync(liveFile(dGh))
+      && sPw.ok === false && !fs.existsSync(liveFile(dPw)),
+      JSON.stringify({ gh: sGh.ok ? 'accepted(!)' : sGh.blocked, pw: sPw.ok ? 'accepted(!)' : sPw.blocked }));
+    check('continuity:clean-objective-passes-scan',
+      sOk.ok === true && fs.existsSync(liveFile(dOk)), `status ok=${sOk.ok}`);
+    // a state file that was VALID will refuse an update carrying a secret
+    const poisoned = C.opUpdate(dOk, { stopReason: `reminder: use key ${fakeAnt}` });
+    const intact = JSON.parse(fs.readFileSync(liveFile(dOk), 'utf8'));
+    check('continuity:update-refuses-secret-patch',
+      poisoned.ok === false && poisoned.blocked === true && intact.status === 'ACTIVE' && intact.stopReason === null,
+      intact.stopReason === null ? 'state unchanged' : JSON.stringify(intact.stopReason));
+  }
+
+  // atomic writes: success leaves no temps; interrupted temps are reported
+  {
+    const d = contProject('temps');
+    const started = C.opInitialize(d, { objective: 'temp audit run' });
+    C.opTransition(d, 'pause'); // now gen 2
+    const noTemps = C.listTemps(d).length;
+    check('continuity:atomic-write-no-temp-on-success',
+      started.ok && noTemps === 0 && C.inspectState(d, { expectedRoot: d }).readStatus === 'ok',
+      `temps after clean writes=${noTemps}`);
+    // simulate a killed process mid atomic write: (a) a fully-written but
+    // unrenamed temp of the PREVIOUS generation, (b) a torn, unparseable temp.
+    const supersededTemp = path.join(d, '.loop', 'continuity.json.tmp-1-abbadecd');
+    fs.writeFileSync(supersededTemp, JSON.stringify({ schemaVersion: C.SCHEMA_VERSION, generation: 1 }));
+    const tornTemp = path.join(d, '.loop', 'continuity.json.tmp-3-c0ffee00');
+    fs.writeFileSync(tornTemp, '{"schemaVersion": 1, "obje');
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:interrupted-temps-reported',
+      inspect.temps.length === 2
+      && inspect.temps.includes(supersededTemp) && inspect.temps.includes(tornTemp)
+      && inspect.state.generation === 2,
+      JSON.stringify(inspect.temps.map((t) => path.basename(t))));
+    // repair deletes only provably SUPERSEDED temps (for the live generation);
+    // unparseable temps are REFUSED - they may hold unrecorded work
+    const repaired = C.repairTemps(d);
+    const afterTemps = C.listTemps(d);
+    check('continuity:repair-removes-superseded-temps-only',
+      repaired.ok === false
+      && repaired.removed.length === 1 && repaired.removed[0] === path.basename(supersededTemp)
+      && repaired.refused.length === 1 && repaired.refused[0] === path.basename(tornTemp)
+      && afterTemps.length === 1 && afterTemps[0] === tornTemp
+      && fs.existsSync(liveFile(d)) === true,
+      JSON.stringify(repaired));
+  }
+
+  // identity gate: another project's state is refused and never mutated
+  {
+    const a = contProject('identity-a');
+    C.opInitialize(a, { objective: 'belongs to A' });
+    const b = contProject('identity-b');
+    fs.cpSync(path.join(a, '.loop'), path.join(b, '.loop'), { recursive: true });
+    const before = fs.readFileSync(liveFile(b), 'utf8');
+    const inspect = C.inspectState(b, { expectedRoot: b });
+    const attempted = C.opTransition(b, 'pause');
+    const after = fs.readFileSync(liveFile(b), 'utf8');
+    check('continuity:identity-mismatch-refused',
+      inspect.identity === 'mismatch' && attempted.ok === false
+      && before === after,
+      `identity=${inspect.identity}`);
+  }
+
+  // sanitized URL fingerprints: credentials never reach disk
+  {
+    const withCreds = 'https://ci-bot:s3cret-token@github.example/org/private-repo.git';
+    const s = C.sanitizeRemoteUrl(withCreds);
+    const withoutCreds = 'https://github.example/org/private-repo.git';
+    const fpRaw = C.fingerprint({ originUrl: withCreds });
+    const fpClean = C.fingerprint({ originUrl: withoutCreds });
+    check('continuity:url-userinfo-sanitized',
+      s.ok && !s.sanitized.includes('s3cret-token') && !s.sanitized.includes('ci-bot')
+      && s.sanitized === withoutCreds,
+      `sanitized=${s.sanitized}`);    check('continuity:fingerprint-is-credential-free',
+      fpRaw.ok && fpClean.ok
+      && /^[0-9a-f]{16}$/.test(fpRaw.originFingerprint)
+      && fpRaw.originFingerprint === fpClean.originFingerprint
+      && !JSON.stringify(fpRaw).includes('s3cret'),
+      `originFingerprint=${fpRaw.ok ? fpRaw.originFingerprint : '?'}`);
+  }
+
+  // fingerprint: 'private-repo' and 'private-repo'.git must NOT collide
+  {
+    const fpA = C.fingerprint({ originUrl: 'https://x.example/a/private-repo' });
+    const fpB = C.fingerprint({ originUrl: 'https://x.example/a/private-repo.git' });
+    check('continuity:fingerprint-differentiates-repos',
+      fpA.ok && fpB.ok && fpA.originFingerprint !== fpB.originFingerprint);
+  }
+
+  // CLI exit-code contract (the real command surface the commands call)
+  {
+    const d = contProject('cli');
+    const helperPath = continuityPath;
+    const run = (...argv) => spawnSync(process.execPath, [helperPath, ...argv], { encoding: 'utf8' });
+    const init = run('init', d, '--objective', 'cli contract run');
+    const initJson = JSON.parse(init.stdout);
+    check('continuity:cli-init-contract',
+      init.status === 0 && initJson.ok === true && initJson.state.status === 'ACTIVE',
+      `status=${init.status}`);
+    const paused = run('transition', d, '--event', 'pause', '--reason', 'session closing');
+    const pausedJson = JSON.parse(paused.stdout);
+    check('continuity:cli-transition-contract',
+      paused.status === 0 && pausedJson.ok && pausedJson.state.status === 'PAUSED');
+    const bad = run('transition', d, '--event', 'complete');
+    check('continuity:cli-invalid-transition-exit-1', bad.status === 1,
+      JSON.parse(bad.stdout).reason);
+    const inspect = run('inspect', d);
+    check('continuity:cli-inspect-exit-0', inspect.status === 0 && JSON.parse(inspect.stdout).readStatus === 'ok');
+    // corrupt on purpose -> BLOCKED class -> exit 2
+    fs.writeFileSync(liveFile(d), 'not json at all');
+    const blocked = run('inspect', d);
+    check('continuity:cli-corrupt-exit-2', blocked.status === 2 && JSON.parse(blocked.stdout).readStatus === 'unparseable');
+    const usage = run('init');
+    check('continuity:cli-missing-arg-exit-3', usage.status === 3);
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a
@@ -561,4 +848,4 @@ function main() {
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main();
+await main();

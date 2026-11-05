@@ -62,8 +62,12 @@ function Write-Fail([string]$Message) { Write-Host "[LOOP] ERROR: $Message" -For
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $srcCommand = Join-Path $repoRoot '.opencode\commands\loop.md'
 $srcSkillDir = Join-Path $repoRoot '.opencode\skills\loop-engine'
+# Continuity helper (ADR 0002): deterministic state validation/persistence.
+# Installed outside the skill directory (see backup-root rationale below:
+# OpenCode discovers extensions under <config>/commands and <config>/skills).
+$srcHelper = Join-Path $repoRoot 'scripts\continuity.mjs'
 
-$requiredSources = @($srcCommand, (Join-Path $srcSkillDir 'SKILL.md'))
+$requiredSources = @($srcCommand, (Join-Path $srcSkillDir 'SKILL.md'), $srcHelper)
 foreach ($src in $requiredSources) {
     if (-not (Test-Path -LiteralPath $src)) {
         Write-Fail "Repository is incomplete; missing source file: $src"
@@ -96,6 +100,7 @@ else {
 
 $destCommand = Join-Path $destRoot 'commands\loop.md'
 $destSkillDir = Join-Path $destRoot 'skills\loop-engine'
+$destHelper = Join-Path $destRoot 'scripts\continuity.mjs'
 
 # Backup root: a sibling of the destination, NEVER inside it. OpenCode scans
 # <config>/commands and <config>/skills for extension files, so an in-place
@@ -165,7 +170,7 @@ function Backup-Then-Remove([string]$Path) {
 # --- Uninstall ---------------------------------------------------------------
 if ($Uninstall) {
     $removed = 0
-    foreach ($target in @($destCommand, $destSkillDir)) {
+    foreach ($target in @($destCommand, $destSkillDir, $destHelper)) {
         if (-not (Test-Path -LiteralPath $target)) {
             Write-Note "Not installed (skipped): $target"
             continue
@@ -261,6 +266,7 @@ function Install-SkillDir([string]$Source, [string]$Destination) {
 try {
     Install-File -Source $srcCommand -Destination $destCommand
     Install-SkillDir -Source $srcSkillDir -Destination $destSkillDir
+    Install-File -Source $srcHelper -Destination $destHelper
 }
 catch {
     Write-Fail $_.Exception.Message

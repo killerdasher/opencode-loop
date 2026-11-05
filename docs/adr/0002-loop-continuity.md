@@ -147,7 +147,8 @@ anything is modified.
   restatement, `objective`, `requirements {MUST, SHOULD, COULD}`,
   `iterations[] {n, stage, summary, nextStep, evidence[], openFindings,
   startedAt, endedAt?}`, `recovery {RECOVERY_REQUIRED reason?; reconciliation[]}`,
-  `stoppingCondition?`, `createdBy {sessionId, model, opencodeVersion}` (advisory).
+  `stoppingCondition?`, `stopReason?` (cancel/complete reason, retained as
+  terminal evidence), `createdBy {sessionId, model, opencodeVersion}` (advisory).
 - **Lifecycle:** `(none) --/loop--> ACTIVE`; `ACTIVE --/loop-pause--> PAUSED`;
   `PAUSED --/loop-resume--> ACTIVE` (after gates below); unexplained
   claims/dirty work → `RECOVERY_REQUIRED`; `ACTIVE|PAUSED --/loop-cancel-->
