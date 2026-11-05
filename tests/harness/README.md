@@ -85,6 +85,11 @@ tests/harness/evidence/<ISO-timestamp>-case<X>-<arm>/   (gitignored)
 - `run-case.mjs`: **costs model tokens** (one session per run; a small case
   is ~20–70 s on the session default model) and requires `--allow-auto`.
   Run manually, one case at a time. Pin `--model` when comparing runs.
+- **Evidence size.** Each run stores an isolated `session.sqlite` in its
+  evidence dir (observed: ~11.5 MB plus `-wal`/`-shm` for a short Case A
+  run, plus the transcript and limits). Evidence is local and gitignored;
+  delete old `tests/harness/evidence/<run>/` directories when they are no
+  longer needed for adjudication.
 - **CI never runs model sessions.** CI runs `scripts/validate.mjs --all` and
   `selftest.mjs` only.
 
