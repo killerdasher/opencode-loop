@@ -78,7 +78,7 @@ CI runs the validator commands plus the harness self-test on Linux and Windows f
 
 ## Reporting bugs
 
-Use the issue tracker for bugs and feature requests. **Security issues must not be filed publicly** — see [SECURITY.md](SECURITY.md).
+Use the issue tracker for bugs and feature requests — GitHub will show a short form for each ([bug](.github/ISSUE_TEMPLATE/bug_report.yml), [feature](.github/ISSUE_TEMPLATE/feature_request.yml)); pull requests have a matching checklist. **Security issues must not be filed publicly** — see [SECURITY.md](SECURITY.md).
 
 ## Licensing
 

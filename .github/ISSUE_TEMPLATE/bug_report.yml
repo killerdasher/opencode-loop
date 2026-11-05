@@ -1,0 +1,59 @@
+name: Bug report
+description: Something does not work the way the documentation says it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. LOOP is a prompt-level workflow, so precise
+        reproduction steps matter more than opinions about what the model did.
+
+        **Security issues must not be filed publicly** — use [GitHub Security Advisories](https://github.com/killerdasher/opencode-loop/security/advisories/new) (see [SECURITY.md](https://github.com/killerdasher/opencode-loop/blob/main/SECURITY.md)).
+  - type: input
+    id: opencode-version
+    attributes:
+      label: OpenCode version
+      description: Output of `opencode --version`
+      placeholder: e.g. v2.2.5
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Exact command(s) or `/loop` invocation, what you expected, and what you observed. Include the relevant part of the loop's iteration banner or final report. Trim anything that could contain code or secrets you do not want public.
+      placeholder: |
+        I ran: /loop --mode deep ...
+        Expected: ...
+        Observed: ...
+    validations:
+      required: true
+  - type: textarea
+    id: gates
+    attributes:
+      label: Validation output
+      description: Run `node scripts/validate.mjs --all` in your clone and paste the Summary lines. Validation needs Node.js 16.7+; if you cannot run it, say so.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Attestations
+      options:
+        - label: This report contains no credentials, tokens, or private data
+          required: true
+        - label: The bug is in or about LOOP itself (not about an unrelated model/tool limitation)
+          required: true
+        - label: I checked Known limitations / Troubleshooting in the README first
+          required: true

@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose an improvement to the workflow, installers, validator, or evaluation harness
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        LOOP deliberately stays dependency-light and prompt-level. Proposals that add the project's
+        first dependency, claim runtime enforcement a Markdown file cannot provide, or promise
+        guaranteed quality need a stronger case than usual — see
+        [docs/design-principles.md](https://github.com/killerdasher/opencode-loop/blob/main/docs/design-principles.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What are you trying to achieve, and where does LOOP fall short today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should change, concretely? Name the affected file(s) if you can (skill, command, installer, validator, harness).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, or why doing nothing is acceptable.
+    validations:
+      required: false
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Attestations
+      options:
+        - label: I read the design principles and my proposal does not contradict them (or I explain the trade-off)
+          required: true
+        - label: This is not a security report (use Private Security Advisories for those)
+          required: true

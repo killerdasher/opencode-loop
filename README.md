@@ -2,6 +2,8 @@
 
 [![validate](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml/badge.svg)](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml) [![release](https://img.shields.io/github/v/release/killerdasher/opencode-loop)](https://github.com/killerdasher/opencode-loop/releases)
 
+*Iterative engineering workflow for OpenCode • zero dependencies • works with any model • CI-tested on Linux and Windows for every push*
+
 **LOOP** is a goal-driven iterative workflow for [OpenCode](https://opencode.ai). It gives your agent a disciplined engineering loop — analyze, inspect, plan, implement, **verify**, adversarially review, improve — and keeps it going until the result is genuinely done, with evidence instead of optimism.
 
 ```
@@ -9,6 +11,40 @@
 ```
 
 LOOP is a command (`.opencode/commands/loop.md`) plus a skill (`.opencode/skills/loop-engine/SKILL.md`). It runs entirely inside your existing OpenCode session: no framework, no API key, no special model, no external service.
+
+## Quick start
+
+Three short steps. You never leave your normal OpenCode session — LOOP is a small set of prompt files installed into your config, not a tool that wraps it.
+
+**1. Install** (global OpenCode config, default scope):
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/killerdasher/opencode-loop.git
+cd opencode-loop
+.\scripts\install.ps1
+```
+
+Linux / macOS (Bash):
+
+```sh
+git clone https://github.com/killerdasher/opencode-loop.git
+cd opencode-loop
+./scripts/install.sh
+```
+
+> PowerShell refusing to run scripts (default `Restricted` policy on many machines)? One-shot instead: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
+
+**2. Run a real task** in any OpenCode session — one with a checkable outcome:
+
+```
+/loop Find and fix the root cause of the slow test in this project. Verify by running the suite.
+```
+
+**3. Watch the workflow happen:** objective → project reconnaissance → plan → implementation increments → **verification of actual behavior** → adversarial review → an honest convergence report (what is done, how it is known, what remains). For bigger bets, add `--mode deep`; for a quick pass, `--max-iterations 2`.
+
+LOOP works with whatever model OpenCode already uses — it adds process discipline and evidence standards, not a runtime. Project scope, `--dry-run`, upgrade/uninstall, and what installation touches: [Installation](#installation).
 
 ## Why LOOP exists
 
@@ -119,7 +155,7 @@ Installs to `${XDG_CONFIG_HOME:-$HOME/.config}/opencode` by default.
 ### What installation does
 
 - Copies `loop.md` into `commands/` and the `loop-engine` skill into `skills/`.
-- **Never silently overwrites.** If a target file already exists and is identical, it is skipped (idempotent). If it differs, installation refuses and tells you why - unless you pass `-Overwrite` / `--overwrite`, which creates a timestamped backup first. Backups go to a sibling of the install root (`<root>-loop-backups\<timestamp>\...`), never inside `<root>/commands` or `<root>/skills`, so an OpenCode extension discovery scan cannot resurrect a replaced revision (a SKILL.md backup inside `skills/` is discovered as a live skill).
+- **Never silently overwrites.** If a target file already exists and is identical, it is skipped (idempotent). If it differs, installation refuses and tells you why — unless you pass `-Overwrite` / `--overwrite`, which creates a timestamped backup first. Backups go to a sibling of the install root (`<root>-loop-backups\<timestamp>\...`), never inside `<root>/commands` or `<root>/skills`, so an OpenCode extension discovery scan cannot resurrect a replaced revision (a SKILL.md backup inside `skills/` is discovered as a live skill).
 - Supports a dry run (`-DryRun` / `--dry-run`) that prints actions without changing anything.
 - Supports uninstall (`-Uninstall` / `--uninstall`), which backs up before removing.
 
@@ -185,7 +221,7 @@ node scripts/validate.mjs --all        # everything
 node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
-Zero dependencies — Node.js only. The same checks run in CI on Linux and Windows (see [docs/architecture.md](docs/architecture.md) for the full design).
+Zero dependencies — Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 190 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
 
 ### Behavioral evaluation
 
@@ -252,11 +288,12 @@ opencode-loop/
 │   ├── evaluation.md                    # behavioral evaluation rubric (Cases A–I)
 │   ├── comparison.md                    # A/B comparison methodology (no results claimed)
 │   └── harness/                         # semi-automated evaluation harness
-│       ├── README.md                    # usage, exit codes, costs, safety
+│       ├── README.md                    # usage, exit codes, costs, isolation model
 │       ├── fixtures.mjs                 # isolated fixture repos for Cases A–I
 │       ├── transcript.mjs               # transcript + git-diff evidence parsers
 │       ├── checks.mjs                   # objective PASS/FAIL/BLOCKED/REVIEW criteria
 │       ├── run-case.mjs                 # runner (`opencode run --format json`)
+│       ├── safety.mjs                   # unattended-run safety contract (env allowlist, least privilege)
 │       └── selftest.mjs                 # free self-test (no model calls)
 ├── docs/
 │   ├── architecture.md · design-principles.md
@@ -264,6 +301,18 @@ opencode-loop/
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
 ```
+
+## Documentation
+
+| Read next | Contents |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | How the command, skill, installers, validator, and evaluation harness fit together — and why |
+| [docs/design-principles.md](docs/design-principles.md) | The ten principles LOOP refuses to violate (evidence, scope, honesty about mechanism) |
+| [docs/adr/0001-runtime-orchestration.md](docs/adr/0001-runtime-orchestration.md) | Why LOOP is prompt-level; what would trigger a plugin/orchestrator layer |
+| [tests/evaluation.md](tests/evaluation.md) | The behavioral evaluation rubric: Cases A–I with objective PASS/FAIL/BLOCKED/REVIEW criteria |
+| [tests/comparison.md](tests/comparison.md) | A/B comparison methodology — with the honest *"no results yet"* ledger |
+| [tests/harness/README.md](tests/harness/README.md) | Harness usage, exit codes, costs, and the full isolation model |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Contributing
 
