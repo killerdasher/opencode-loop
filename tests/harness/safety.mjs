@@ -133,5 +133,22 @@ export function writePermissionConfig(destDir, fileName = 'opencode.permissions.
   return target;
 }
 
+/**
+ * Operator-facing scrub summary for the RUNNER'S CONSOLE output: the COUNT of
+ * dropped variables, never their names. The same contract as the reports —
+ * which credential-shaped variables exist on the operator's machine is not
+ * public content, and console output frequently gets pasted into bug reports
+ * or chats. Operator-forwarded (--env-pass) names appear separately in the
+ * caller's output, because the operator supplied those names themselves.
+ *
+ * @param {string[]} dropped names of env vars NOT inherited
+ * @returns {string} a one-line summary that names nothing from the machine
+ */
+export function scrubSummary(dropped) {
+  return dropped.length > 0
+    ? `${dropped.length} env var(s) not inherited (names withheld - see ${ISOLATION_DOC})`
+    : 'env: nothing to drop';
+}
+
 /** Where the runner tells operators to read the isolation model. */
 export const ISOLATION_DOC = 'tests/harness/README.md';

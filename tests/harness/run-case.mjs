@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
 import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
-import { keeperEnv, writePermissionConfig, permissionRules, ISOLATION_DOC } from './safety.mjs';
+import { keeperEnv, writePermissionConfig, permissionRules, scrubSummary, ISOLATION_DOC } from './safety.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HARNESS_DIR, '..', '..');
@@ -243,10 +243,9 @@ function main() {
   console.log(`[harness]   operator acknowledgement of unattended auto-approval: --allow-auto`);
   console.log(`[harness]   least-privilege permission config: ${permissionConfig}`);
   console.log(`[harness]     built-in denies: external_directory, webfetch, websearch, .env reads, curl/wget (NOT an OS sandbox - see ${ISOLATION_DOC})`);
-  const droppedList = droppedEnv.length > 0 ? `${droppedEnv.length} env var(s) not inherited: ${droppedEnv.join(', ')}` : 'env: nothing to drop';
-  console.log(`[harness]   scrubbed environment (${droppedList})`);
+  console.log(`[harness]   scrubbed environment (${scrubSummary(droppedEnv)})`);
   if (opts.envPass.length > 0) {
-    console.log(`[harness]   operator-approved env forwarding (names only): ${opts.envPass.join(', ')}`);
+    console.log(`[harness]   operator-approved env forwarding (names only, operator-supplied): ${opts.envPass.join(', ')}`);
   }
   console.log(`[harness] running: opencode ${args.slice(0, -1).join(' ')} "<message>"`);
   const started = Date.now();

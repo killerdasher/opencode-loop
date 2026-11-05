@@ -104,7 +104,7 @@ them and explicitly does not isolate others:
 | **Fixture directory** | Isolated as a *destination of the harness's own actions*: built in a temp dir, seed-verified, and — on PASS — removed. The harness never writes outside it and a gitignore'd evidence dir. |
 | **Session & database** | Isolated per run: `opencode run --standalone` boots a private server and `OPENCODE_DB` points it at `session.sqlite` inside the evidence dir (verified against real run artifacts; a non-standalone run would instead talk to the user's shared background server, so `--standalone` is required, not decorative). |
 | **Configuration** | **Not isolated.** OpenCode merges the user's global config into every run (providers, plugins, instructions). The harness layers a least-privilege permission config on top via the documented `OPENCODE_CONFIG` tier (written to `opencode.permissions.json`), which overrides the global config on conflicting keys; it does not remove the global config. |
-| **Permission restrictions** | Explicit opt-in with least privilege: a model run is refused without `--allow-auto`; with it, the permission config hard-denies `external_directory` (tools touching paths outside the fixture), `webfetch`, `websearch`, `*.env` reads, and `curl`/`wget` bash commands. Under `--auto` these denies are still enforced (documented OpenCode behavior); everything OpenCode would prompt for is approved. |
+| **Permission restrictions** | Explicit opt-in with least privilege: a model run is refused without `--allow-auto`; with it, the permission config hard-denies `external_directory` (tools touching paths outside the fixture), `webfetch`, `websearch`, `*.env` reads — with `*.env.example` explicitly allowed in the config (non-secret template files) — and `curl`/`wget` bash commands. Under `--auto` these denies are still enforced (documented OpenCode behavior); everything OpenCode would prompt for is approved. |
 | **Operating-system sandbox** | **No operating-system sandbox** exists. `bash`, `edit`, and `read` default to allow; a child process has the user's effective abilities. The permission config contains a few named risky actions; it cannot contain `bash` generally. Anything requiring true isolation (e.g. adversarial models, untrusted tasks) must run in a disposable environment (container/VM/user account) — that is the operator's job, not LOOP's. |
 
 Additional safety controls on every model run (both A/B arms identically):
@@ -129,10 +129,13 @@ Per-run controls (both A/B arms identically):
   `OPENCODE_DB`/`OPENCODE_CONFIG` are inherited. Matching is case-insensitive
   on Windows (its real spellings are `Path`, `ComSpec`) and case-sensitive on
   POSIX (where `path` is a different variable). Credential-shaped variables
-  (`*_TOKEN`, `*_API_KEY`, SSH agents…) never reach the session; the report
-  records the COUNT of dropped variables, never their names.
+  (`*_TOKEN`, `*_API_KEY`, SSH agents…) never reach the session; reports and
+  the runner's console alike show the COUNT of dropped variables, never their
+  names (`scrubSummary()` — console output often gets pasted into bug
+  reports, and deserves the same protection).
   `--env-pass NAME,...` forwards named extras (e.g. the provider key an
-  env-auth setup needs), visible in the report.
+  env-auth setup needs); those appear by name in the console and report,
+  because the operator supplied the names themselves.
 - **Evidence hygiene.** Evidence is local and gitignored; reports record the
   COUNT of scrubbed-out variables, never their names — the set of variables
   that exist on a machine is not report content — and no values are ever
@@ -148,7 +151,7 @@ Per-run controls (both A/B arms identically):
 | `transcript.mjs` | `parseTranscript()` (NDJSON → timeline), `collectDiffFiles()` (porcelain → paths), and `writeReports()` (report.json/report.md); parsers and the writer are extracted so the self-test can regression-test them |
 | `checks.mjs` | objective criteria per case; returns per-check status + verdict aggregation |
 | `run-case.mjs` | CLI runner: fixture → arm setup → safety controls → `opencode run` → evidence → evaluation → exit code |
-| `safety.mjs` | unattended-run safety contract: `keeperEnv()` env allowlist, least-privilege `permissionRules()`/`writePermissionConfig()` |
+| `safety.mjs` | unattended-run safety contract: `keeperEnv()` env allowlist, least-privilege `permissionRules()`/`writePermissionConfig()`, count-only `scrubSummary()` console disclosure |
 | `selftest.mjs` | free self-test: fixtures build, seeds are real, checks are sensitive, parser regressions, unattended-run safety contract |
 
 ## Adding a case

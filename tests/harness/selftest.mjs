@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
 import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
-import { keeperEnv, permissionRules, writePermissionConfig } from './safety.mjs';
+import { keeperEnv, permissionRules, writePermissionConfig, scrubSummary } from './safety.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IS_WINDOWS = process.platform === 'win32';
@@ -221,6 +221,35 @@ function main() {
     check('safety:env-pass-forwards-named-only',
       withPass.env.EXTRA_PASS_VAR === 'forwarded' && !withPass.env.DB_PASSWORD,
       `forwarded EXTRA_PASS_VAR, still dropped DB_PASSWORD`);
+
+    // Console contract: the runner's console output shows the COUNT of
+    // dropped variables, never their names (same as the reports - console
+    // output often gets pasted into public bug reports; which credential-
+    // shaped variables exist on a machine is not public content).
+    {
+      const sneaky = ['GH_TOKEN', 'PROD_TOKEN', 'ANTHROPIC_API_KEY'];
+      const s = scrubSummary(sneaky);
+      check('safety:scrub-summary-count-only',
+        s.includes(`${sneaky.length} env var(s) not inherited`)
+        && !sneaky.some((n) => s.includes(n)),
+        `conceals all ${sneaky.length} machine-variable names`);
+      check('safety:scrub-summary-empty',
+        scrubSummary([]) === 'env: nothing to drop',
+        scrubSummary([]));
+    }
+
+    // Source guard (regression on the fixed leak): the runner must render its
+    // console scrub summary through the count-only helper above and must not
+    // re-join dropped names inline. The old code fails this check, so the
+    // guard's sensitivity is proven by the defect it catches.
+    {
+      const runnerSrc = fs.readFileSync(path.join(HARNESS_DIR, 'run-case.mjs'), 'utf8');
+      const helperInUse = runnerSrc.includes('scrubSummary(droppedEnv');
+      const inlineJoin = runnerSrc.includes('droppedEnv.join');
+      check('runner:scrub-summary-helper-in-use', helperInUse && !inlineJoin,
+        helperInUse ? (inlineJoin ? 'inline droppedEnv.join still present' : 'count-only helper wired into console output')
+          : 'run-case.mjs does not call scrubSummary()');
+    }
   }
 
   // Permission rules: the loud, tempting failures an unattended agent must
