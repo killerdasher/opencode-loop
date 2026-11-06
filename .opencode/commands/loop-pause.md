@@ -26,7 +26,7 @@ Run the helper's `inspect` on the current project root:
 - Integrity CORRUPT or unsupported → report BLOCKED: the file is preserved
   byte-for-byte and nothing may pause over it; explain the manual options.
 - Identity mismatch → refuse: show the recorded project root vs this one.
-- Status RELAUNCH-IN-PROGRESS note: only `ACTIVE` may pause. If the live
+- Status gate: only `ACTIVE` may pause. If the live
   status is `PAUSED`, reporting "already paused" is the honest outcome. If it
   is `RECOVERY_REQUIRED` or `BLOCKED`, refuse and point to
   `/loop-resume` (recovery discipline) or `/loop-cancel`.
