@@ -88,6 +88,18 @@ The A/B comparison protocol (standard OpenCode vs LOOP) is specified in `tests/c
 
 CI (`.github/workflows/validate.yml`) runs all three modes plus `tests/harness/selftest.mjs` on `ubuntu-latest` and `windows-latest`, so both installers execute under both platforms' shells (GitHub runners ship bash on Windows and pwsh on Linux).
 
+## Continuity architecture (ADR 0002)
+
+Run state is a durable, model-agnostic file (`<project>/.loop/continuity.json`), not session memory. Three tiers, honestly separated:
+
+- **Commands + skills** orchestrate: four thin commands (`loop-status`, `loop-pause`, `loop-resume`, `loop-cancel`) and two touchpoints in the nine-stage workflow (Stage 0 detects live checkpoints and refuses a silent second run; Stage 8 archives the terminal state). They can instruct and restore, but cannot guarantee writes or interrupt a live turn.
+- **The helper** (`scripts/continuity.mjs`, optional, zero external dependencies) validates schema/transitions/identity and persists atomically; when it cannot run, operations report `BLOCKED` and the plain `/loop` workflow is unaffected. It is invoked per operation, never resident.
+- **A future native OpenCode runtime** (not built; ADR 0001 options remain rejected under their triggers) would own automatic re-drive, hard enforcement, provider-limit detection, and mid-turn interruption.
+
+Resume discipline is gate-ordered (integrity → identity → no automatic resume → read-only reconciliation → explicit operator approval → restore at the recorded stage), cancel/complete runs are archived under `.loop/archive/`, and installers place the helper at `<config>/scripts/continuity.mjs` outside the skill directory so skill-dir identity comparisons stay exact.
+
+User-facing guide: `docs/continuity.md`; the verbatim capability table and revisit triggers live in `docs/adr/0002-loop-continuity.md`.
+
 ## Compatibility
 
 - **OpenCode:** designed against the V2 documentation for Agent Skills (`SKILL.md`, `name`/`description` frontmatter, `^[a-z0-9]+(-[a-z0-9]+)*$` name rule) and custom commands (`commands/*.md`, `$ARGUMENTS`). Verified against OpenCode v2.2.5 during development.

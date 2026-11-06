@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **LOOP Continuity** (ADR 0002, `docs/adr/0002-loop-continuity.md`; user guide `docs/continuity.md`): durable run state for the nine-stage workflow. A run's state (`ACTIVE | PAUSED | RECOVERY_REQUIRED | BLOCKED | COMPLETED | CANCELLED`, with file integrity tracked separately as `VALID | SUSPECTED_STALE | CORRUPT`) is validated and persisted by an optional, zero-external-dependency helper (`scripts/continuity.mjs`, Node >= 16.7) into `<project>/.loop/continuity.json` - atomic writes (temp + fsync + rename, recoverable temps, and a `repair` path that only removes provably superseded leftovers), sanitized remote-URL identity fingerprints, cancel/complete archiving to `.loop/archive/` with terminal evidence retained (never silently deleted), and a best-effort secret-shape scanner that refuses to persist matches (limits documented in the file header). Four thin commands orchestrate the lifecycle: `/loop-status` (read-only state + git cross-check), `/loop-pause` (stage-boundary pause with recorded next step), `/loop-resume` (gates: integrity, identity, no automatic resumption of an interrupted ACTIVE run, read-only reconciliation first, explicit operator approval, then restore into the nine-stage loop at the recorded stage), and `/loop-cancel` (cancel + archive; reasons retained). Cross-session and cross-model recovery works because the checkpoint is plain files, not session memory; provider-quota or context-limit death is recovered through the same manual resume path. Installers install the helper (`<config>/scripts/continuity.mjs`) and remove it on uninstall. Documented limits: checkpoint writing is prompt-level discipline measured by the behavioral harness (never guaranteed), interrupted stages are not promised bounded loss, one live run per project is an operational rule (generation detects stale snapshots; not a lock), and `--force` does not exist in this release.
+
+- **Continuity reference** (`.opencode/skills/loop-engine/references/continuity.md`): agent-facing protocol - helper search order with the `BLOCKED` degradation contract, state vocabulary, write-before-act timing, resume-gate order, and archive rule.
+
+### Fixed
+
+- **Identity mismatch enforcement gap** (found by the new real-module tests, fixed before any command shipped): the helper detected a project identity mismatch but only *enforced* it when the caller supplied an expected root; a direct state-mutating call without that argument could operate on another project's checkpoint. Mutating operations now derive the authority from the project root they were invoked on.
+
+### Changed
+
+- SKILL.md: Stage 0 refuses a silent second run while a live checkpoint exists and, with the helper available, writes stage-entry checkpoints (write-before-act); Stage 8 records completion through the helper and lets early stops stay PAUSED for later `/loop-resume`. Behavior without the helper is unchanged (continuity operations report `BLOCKED`).
+- Validation grew with the features: structural checks for the four continuity commands (frontmatter, description, `$ARGUMENTS`, reference route, `BLOCKED` path, and the absence of any override flag), helper content checks (zero-dep, no-network, status vocabulary, documented scan limits), installer matrix assertions for helper install/uninstall byte-identity, and nine new defect-injection mutations. The behavioral self-test grew from 79 to 113 checks, importing the actual helper module (no mirrored test-only model).
+
 ## [0.3.1] - 2026-11-05
 
 Reliability, safety, and engineering-quality hardening of the behavioral runner.

@@ -512,6 +512,36 @@ function validateRepo(root) {
   const license = readIfExists(path.join(root, 'LICENSE'));
   push('docs:license', license !== null && /MIT/i.test(license), license !== null && /MIT/i.test(license) ? 'MIT license present' : 'LICENSE missing or not MIT');
 
+  // -- Continuity docs accuracy (ADR 0002 §7 must appear verbatim; limits stay
+  // stated, not improved away). Weakly-anchored wording is intentionally
+  // avoided: single-word checks are too easy for prose drift to satisfy.
+  const contDocs = readIfExists(path.join(root, 'docs/continuity.md'));
+  if (contDocs === null) {
+    push('docs:continuity-table', false, 'docs/continuity.md missing');
+    push('docs:continuity-limits', false, 'docs/continuity.md missing');
+  } else {
+    const tableAnchors = [
+      '| Helper | validate schema/transitions/identity; atomically persist; reject secret-shaped values (best-effort) | enforce anything at runtime; list processes; lock files |',
+      '| Future native OpenCode runtime (NOT built) | automatic session re-drive on idle/error events, hard iteration enforcement, provider-limit detection with backoff, mid-turn interruption | — all four named capabilities are explicitly absent in this release |',
+    ];
+    const missingAnchors = tableAnchors.filter((s) => !contDocs.includes(s));
+    push('docs:continuity-table', missingAnchors.length === 0,
+      missingAnchors.length === 0 ? 'ADR 0002 §7 table rows present verbatim' : `missing table anchors: ${missingAnchors.length}`);
+    // Markdown emphasis/bticks are noise for anchor matching on plain phrasing
+    const normalized = contDocs.replace(/`/g, '');
+    const limitAnchors = ['No guaranteed checkpoints', 'No bounded-loss promise', 'No locking', 'No --force'];
+    const missingLimits = limitAnchors.filter((s) => !normalized.includes(s));
+    push('docs:continuity-limits', missingLimits.length === 0,
+      missingLimits.length === 0 ? 'all four stated limitations present' : `missing limitations: ${missingLimits.join(', ')}`);
+  }
+  const readmeContLinks = readIfExists(path.join(root, 'README.md'));
+  push('docs:readme-continuity', readmeContLinks !== null
+    && readmeContLinks.includes('/loop-resume')
+    && readmeContLinks.includes('docs/continuity.md'),
+    readmeContLinks !== null && readmeContLinks.includes('/loop-resume') && readmeContLinks.includes('docs/continuity.md')
+      ? 'README documents the continuity commands and doc'
+      : 'README missing continuity command/doc references');
+
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
     push('tests:evaluation-cases', false, 'tests/evaluation.md missing');
@@ -805,6 +835,28 @@ function runSelfTest(root) {
       id: 'continuity reference document deleted',
       expect: 'reference:continuity.md',
       delete: '.opencode/skills/loop-engine/references/continuity.md',
+    },
+    {
+      id: 'continuity docs upgrade the helper tier',
+      expect: 'docs:continuity-table',
+      file: 'docs/continuity.md',
+      // Doc drift toward over-claiming: if the Helper row sells runtime
+      // capability, the differentiation check must fire.
+      apply: (t) => t
+        .split('enforce anything at runtime; list processes; lock files')
+        .join('enforce at runtime and lock the state file against concurrent writers'),
+    },
+    {
+      id: 'continuity docs improve promises away',
+      expect: 'docs:continuity-limits',
+      file: 'docs/continuity.md',
+      apply: (t) => t.split('- **No bounded-loss promise.**').join('- ****Bounded-loss guarantee.**'),
+    },
+    {
+      id: 'README drops the continuity commands',
+      expect: 'docs:readme-continuity',
+      file: 'README.md',
+      apply: (t) => t.split('/loop-resume').join('/loop-continue'),
     },
     // -- 0.3.0 audit findings (F3/F4/F5) + new-file guards --------------------
     {
