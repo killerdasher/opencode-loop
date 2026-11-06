@@ -600,6 +600,33 @@ async function main() {
       JSON.stringify(bogus.errors.slice(0, 2)));
   }
 
+  // task identity is an enforced derivation invariant (P1 gap closed fresh:
+  // a drifted or hand-edited taskId is now invalid, never format-tolerated)
+  {
+    const d = contProject('taskid');
+    C.opInitialize(d, { objective: 'task identity subject' });
+    const okObj = JSON.parse(fs.readFileSync(liveFile(d), 'utf8'));
+    const vValid = C.validateStateObject(okObj);
+    check('continuity:task-identity-invariant-holds',
+      vValid.ok === true && C.taskIdFor(okObj.objective, okObj.createdAt) === okObj.taskId,
+      `taskId=${okObj.taskId}`);
+    // tamper the objective ON DISK (simulates an edited state file): the
+    // recorded taskId can no longer be derived from the objective
+    const tampered = JSON.stringify(
+      { ...okObj, stopReason: null, objective: `${okObj.objective} (altered in editor)` },
+      null, 2,
+    );
+    fs.writeFileSync(liveFile(d), tampered);
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const attempted = C.opTransition(d, 'pause');
+    check('continuity:task-identity-tamper-rejected',
+      inspect.readStatus === 'invalid' && inspect.integrity === 'CORRUPT'
+      && inspect.errors.some((e) => e.includes('taskId does not match its derivation'))
+      && attempted.ok === false && attempted.blocked === true
+      && fs.readFileSync(liveFile(d), 'utf8') === tampered,
+      `readStatus=${inspect.readStatus}, bytes preserved on disk`);
+  }
+
   // terminal states archive and are RETAINED across new runs (never deleted)
   {
     const d = contProject('archive');

@@ -280,8 +280,20 @@ export function validateStateObject(raw) {
     };
   }
   if (raw.tool !== TOOL_ID) errors.push(`unknown tool identifier: ${JSON.stringify(raw.tool)}`);
+  // Task identity is a derivation invariant, not just a format: the taskId must
+  // recompute from (objective, createdAt). A drifted or hand-edited ID means
+  // the record's identity no longer matches its content - refuse as invalid
+  // (inspectState classifies this as CORRUPT; mutations are refused; nothing
+  // is overwritten).
+  const derivedTaskId =
+    typeof raw.objective === 'string' && raw.objective.length > 0
+    && typeof raw.createdAt === 'string' && !Number.isNaN(Date.parse(raw.createdAt))
+      ? taskIdFor(raw.objective, raw.createdAt)
+      : null;
   if (typeof raw.taskId !== 'string' || !/^[0-9a-f]{16}$/.test(raw.taskId)) {
     errors.push('taskId must be 16 lowercase hex characters');
+  } else if (derivedTaskId !== null && raw.taskId !== derivedTaskId) {
+    errors.push(`taskId does not match its derivation SHA-256(objective + createdAt): ${raw.taskId} => expected ${derivedTaskId}`);
   }
   for (const f of ['createdAt', 'updatedAt']) {
     if (typeof raw[f] !== 'string' || Number.isNaN(Date.parse(raw[f]))) {
