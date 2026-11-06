@@ -584,6 +584,22 @@ async function main() {
     check('continuity:invalid-transitions-error', bad.length === 0, bad.length ? JSON.stringify(bad) : 'all invalid pairs rejected');
   }
 
+  // integrity dimension is data the commands manage; the helper must accept
+  // the documented values and refuse the undocumented ones
+  {
+    const d = contProject('stale');
+    C.opInitialize(d, { objective: 'stale-integrity subject' });
+    const marked = C.opUpdate(d, { integrity: 'SUSPECTED_STALE' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:stale-integrity-persisted',
+      marked.ok && inspect.state.integrity === 'SUSPECTED_STALE',
+      `integrity=${inspect.state.integrity}`);
+    const bogus = C.validateStateObject({ ...inspect.state, integrity: 'NOT_SO_BAD' });
+    check('continuity:undocumented-integrity-rejected',
+      bogus.ok === false && bogus.errors.some((e) => e.includes('integrity')),
+      JSON.stringify(bogus.errors.slice(0, 2)));
+  }
+
   // terminal states archive and are RETAINED across new runs (never deleted)
   {
     const d = contProject('archive');

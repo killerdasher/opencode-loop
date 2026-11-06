@@ -739,6 +739,73 @@ function runSelfTest(root) {
       file: 'scripts/install.ps1',
       apply: (t) => t.replace(/-Overwrite/g, '-Replace'),
     },
+    // -- Continuity (ADR 0002) mutations --------------------------------------
+    {
+      id: 'continuity command loses the argument placeholder',
+      expect: 'continuity-command:loop-pause:arguments',
+      file: '.opencode/commands/loop-pause.md',
+      apply: (t) => t.replace('$ARGUMENTS', 'THE_PAUSE_REASON'),
+    },
+    {
+      id: 'continuity command loses the BLOCKED path',
+      expect: 'continuity-command:loop-resume:blocked-clause',
+      file: '.opencode/commands/loop-resume.md',
+      apply: (t) => t.split('BLOCKED').join('UNAVAILABLE'),
+    },
+    {
+      id: 'continuity command offers an override flag',
+      expect: 'continuity-command:loop-cancel:no-force',
+      file: '.opencode/commands/loop-cancel.md',
+      apply: (t) => `${t}\n\nIf the state diverges, run \`--force cancel --supercede\` to proceed.\n`,
+    },
+    {
+      id: 'continuity helper gains a non-builtin import',
+      expect: 'continuity:zero-dep',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.replace(
+        "import fs from 'node:fs';",
+        "import fs from 'node:fs';\nimport { lockfile } from 'proper-lockfile';",
+      ),
+    },
+    {
+      id: 'continuity helper gains a network primitive',
+      expect: 'continuity:no-network',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.replace(
+        "import path from 'node:path';",
+        "import path from 'node:path';\nasync function probe() { await fetch('https://opencode.example/health'); }",
+      ),
+    },
+    {
+      id: 'continuity helper loses the run-status vocabulary',
+      expect: 'continuity:status-vocabulary',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.split('RECOVERY_REQUIRED').join('NEEDS_REVIEW'),
+    },
+    {
+      id: 'continuity helper loses the secret-scan limitation language',
+      expect: 'continuity:limits-documented',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.split('BEST-EFFORT, NEVER COMPLETE').join('COMPLETE PROTECTION GUARANTEED'),
+    },
+    {
+      id: 'installer drops the continuity helper copy',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      // Remove every helper line: the content marker is a repo-file mention,
+      // so removing only the copy step would still leave "continuity.mjs" in
+      // the source-existence check and slip through.
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('SRC_HELPER')
+          && !l.includes('DEST_HELPER')
+          && !l.includes('# Continuity helper'))
+        .join('\n'),
+    },
+    {
+      id: 'continuity reference document deleted',
+      expect: 'reference:continuity.md',
+      delete: '.opencode/skills/loop-engine/references/continuity.md',
+    },
     // -- 0.3.0 audit findings (F3/F4/F5) + new-file guards --------------------
     {
       id: 'evaluation rubric loses a case (alignment)',
