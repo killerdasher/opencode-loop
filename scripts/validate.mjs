@@ -27,6 +27,10 @@ const isWindows = process.platform === 'win32';
 
 const REQUIRED_FILES = [
   '.opencode/commands/loop.md',
+  '.opencode/commands/loop-status.md',
+  '.opencode/commands/loop-pause.md',
+  '.opencode/commands/loop-resume.md',
+  '.opencode/commands/loop-cancel.md',
   '.opencode/skills/loop-engine/SKILL.md',
   '.opencode/skills/loop-engine/references/quality-gates.md',
   '.opencode/skills/loop-engine/references/risk-analysis.md',
@@ -60,6 +64,7 @@ const REQUIRED_SKILL_REFERENCES = [
   'quality-gates.md',
   'risk-analysis.md',
   'evaluation-cases.md',
+  'continuity.md',
 ];
 
 const SECRET_PATTERNS = [
@@ -260,6 +265,40 @@ function validateRepo(root) {
         invokes ? 'instructs loading the loop-engine skill' : 'missing explicit loop-engine skill invocation',
       );
     }
+  }
+
+  // -- Continuity lifecycle commands (ADR 0002) -------------------------------
+  // Thin command tier: each must carry valid frontmatter, a description, an
+  // argument placeholder where takeable, route through references/continuity.md,
+  // and report BLOCKED when the helper cannot run. --force must not exist.
+  for (const name of ['loop-status', 'loop-pause', 'loop-resume', 'loop-cancel']) {
+    const p = path.join(root, `.opencode/commands/${name}.md`);
+    const text = readIfExists(p);
+    if (text === null) {
+      push(`continuity-command:${name}:frontmatter`, false, 'file missing');
+      continue;
+    }
+    const fm = parseFrontmatter(text);
+    push(`continuity-command:${name}:frontmatter`, fm.ok, fm.ok ? 'valid' : fm.error);
+    push(`continuity-command:${name}:description`, Boolean(fm.data?.description), fm.data?.description ? 'present' : 'missing description');
+    const takesArgs = true; // every continuity command accepts optional free text (reason/keyword/context)
+    push(
+      `continuity-command:${name}:arguments`,
+      text.includes('$ARGUMENTS'),
+      text.includes('$ARGUMENTS') ? 'literal $ARGUMENTS present' : 'missing $ARGUMENTS placeholder',
+    );
+    const routeToReference = text.includes('references/continuity.md');
+    push(`continuity-command:${name}:continuity-reference`, routeToReference,
+      routeToReference ? 'routes through references/continuity.md' : 'missing continuity reference route');
+    const blockedLanguage = /BLOCKED/.test(text);
+    push(`continuity-command:${name}:blocked-clause`, blockedLanguage,
+      blockedLanguage ? 'BLOCKED degradation path present' : 'missing BLOCKED degradation instructions');
+    // `--force` must not EXIST as an offered override. Explicit sentences like
+    // "There is no --force in this release" are honest limitation statements
+    // and are stripped before the scan; any remaining mention is an offering.
+    const noForce = !/--force/.test(text.replace(/no\s+`?--force`?/gi, ''));
+    push(`continuity-command:${name}:no-force`, noForce,
+      noForce ? 'no override flag' : '--force appears (must not exist in this release)');
   }
 
   // -- Skill ----------------------------------------------------------------
@@ -914,6 +953,8 @@ function runInstallTests(root) {
 
     const destCommand = path.join(xdg, 'opencode', 'commands', 'loop.md');
     const destSkill = path.join(xdg, 'opencode', 'skills', 'loop-engine', 'SKILL.md');
+    const destHelper = path.join(xdg, 'opencode', 'scripts', 'continuity.mjs');
+    const srcHelper = path.join(root, 'scripts', 'continuity.mjs');
     const scenario = (name, fn) => {
       try {
         fn();
@@ -931,6 +972,8 @@ function runInstallTests(root) {
       assert(fs.existsSync(destCommand), 'loop.md not installed');
       assert(fs.existsSync(destSkill), 'SKILL.md not installed');
       assert(fs.readFileSync(destCommand, 'utf8') === fs.readFileSync(srcCommand, 'utf8'), 'installed loop.md differs from source');
+      assert(fs.existsSync(destHelper), 'continuity helper not installed');
+      assert(fs.readFileSync(destHelper, 'utf8') === fs.readFileSync(srcHelper, 'utf8'), 'installed continuity helper differs from source');
     });
 
     scenario('idempotent-rerun', () => {
@@ -1048,6 +1091,7 @@ function runInstallTests(root) {
       assert(r.status === 0, `exit ${r.status}: ${r.out}`);
       assert(!fs.existsSync(destCommand), 'loop.md still present after uninstall');
       assert(!fs.existsSync(destSkill), 'skill dir still present after uninstall');
+      assert(!fs.existsSync(destHelper), 'continuity helper still present after uninstall');
       const backupsRoot = path.join(xdg, 'opencode-loop-backups');
       assert(fs.existsSync(backupsRoot), `no uninstall backup root kept: ${backupsRoot}`);
       // The uninstall backup must keep the loop.md content; the discovery
