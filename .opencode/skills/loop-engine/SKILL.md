@@ -60,6 +60,31 @@ Classify requirements:
 
 Do not invent additional product requirements. Ask the user only when an essential decision genuinely cannot be inferred safely; in every other case choose a reasonable, safe assumption and list it in the Stage 0 summary.
 
+**Task profile (P5 — adaptive methodology).** If the `/loop` arguments
+resolved a `--profile <name>` flag (build | debug | refactor | audit |
+migrate), read `references/profiles/<name>.md` and apply it for the rest of
+the run: it tunes stage emphasis, verification methods, risk priorities,
+completion criteria, forbidden shortcuts, and expected evidence. Profiles
+are selected from explicit user intent and never auto-inferred; the
+operator's task scope passes through verbatim and is never overridden. The
+nine-stage workflow and the hard safety rules apply unchanged to every
+profile - a profile never removes a stage, never weakens a safeguard, and
+never substitutes its completion criteria for the Stage 8 evidence
+requirements (it only adds profile-specific ones). No `--profile` flag (or
+an explicitly corrected unknown profile) means the generic loop - run it
+exactly as this skill otherwise prescribes.
+
+**Continuity checkpoint (ADR 0002).** If a live `.loop/continuity.json`
+checkpoint exists for this project (an ACTIVE, PAUSED, RECOVERY_REQUIRED, or
+BLOCKED run), do not silently start a second run: refuse and point to
+`/loop-status` and `/loop-resume` - restoring a recorded run is
+`/loop-resume`'s gated job. When starting a new run is correct (no live run,
+or an operator-approved archived one), use the continuity helper to write the
+checkpoint at stage entry (write-before-act) and keep it truthful - as
+`references/continuity.md` specifies. With no usable helper, report BLOCKED
+for continuity operations and run the loop exactly as this skill otherwise
+prescribes.
+
 ## STAGE 1 - Project reconnaissance
 
 Before anything is modified, establish the baseline where relevant:
@@ -158,6 +183,27 @@ Stopping conditions - any one is sufficient to stop:
 
 If you stop under conditions 2-5 with unsatisfied requirements, report the result as **incomplete**: state precisely which requirements remain unmet and what work remains. Never relabel an incomplete result as a successful one.
 
+**Continuity closeout (ADR 0002).** On convergence, record the checkpoint's
+terminal state through the helper (`transition --event complete` with the
+named stopping condition), which archives the run to `.loop/archive/`;
+stopping early leaves the run PAUSED (not COMPLETED) so a later session can
+continue it through `/loop-resume`. Terminal evidence is retained, never
+silently deleted. No helper available: report BLOCKED and say the run state
+lives only in this report.
+
+**Completion verdict (deterministic, evidence-based).** When the
+`loop-evaluator` helper (`scripts/evaluator.mjs`, search order as in
+`references/continuity.md`) is available, convergence claims are backed by
+its evidence manifest: record criteria, executed evidence
+(deterministic entries carry a re-runnable command), findings, and blockers
+in `<project>/.loop/verification.json` via `record`, and report the derived
+outcome from `outcome` — one of `PASS | FAIL | BLOCKED | NEEDS_REVIEW`.
+A model-written completion statement is never accepted as proof;
+`NEEDS_REVIEW`/`BLOCKED` outcomes are reported as exactly that, never
+relabeled. Without the evaluator, say so and converge on the normal
+Stage 5 evidence rules. This does not change the nine-stage methodology:
+it hardens what the Stage 8 completion claim is allowed to rest on.
+
 ## Reporting contract
 
 At each iteration boundary and whenever progress is material:
@@ -181,7 +227,7 @@ Status vocabulary that must be used exactly:
 
 Never upgrade a label without new evidence, and never downgrade a problem by reclassifying it.
 
-The full report format - including the requirement and verification tables and the completion classification - lives in `references/quality-gates.md`. Adversarial-review checklists live in `references/risk-analysis.md`. Behavioral guidance for atypical situations (uncommitted user changes, ambiguous briefs, blocked verification, scope pressure, security work, diminishing returns) lives in `references/evaluation-cases.md`.
+The full report format - including the requirement and verification tables and the completion classification - lives in `references/quality-gates.md`. Adversarial-review checklists live in `references/risk-analysis.md`. Behavioral guidance for atypical situations (uncommitted user changes, ambiguous briefs, blocked verification, scope pressure, security work, diminishing returns) lives in `references/evaluation-cases.md`. The durable-run protocol (checkpoints, helper paths, resume gates, archive rule) lives in `references/continuity.md`.
 
 ## Calibration
 

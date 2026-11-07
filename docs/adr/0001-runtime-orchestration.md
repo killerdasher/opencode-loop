@@ -158,3 +158,23 @@ complexity"):
      removes the dependency argument against Option 2.
 - If reopened, prefer Option 2 over Option 3 (smaller surface, first-party
   API) with a mandatory skill-only fallback path.
+
+## Addendum — 2026-11-05: helper-backed persistence (ADR 0002)
+
+ADR 0002 (LOOP Continuity) adds an **optional, deterministic Node helper**
+(`scripts/continuity.mjs`) that validates and persists a durable run-state
+file for the nine-stage workflow.
+
+This addendum records why that does **not** change this ADR's decision:
+
+- The helper is **offline, file-scoped validation/persistence code** — the
+  same class as this repository's own `scripts/validate.mjs`: it has no
+  session hooks, registers no tools, runs no server, intercepts no events,
+  and adds no dependency.
+- The workflow itself remains **skill-first**: when the helper is unavailable,
+  `/loop` keeps running exactly as today, and continuity operations report
+  `BLOCKED` instead of degrading silently.
+- Plugin (Option 2) and external orchestrator (Option 3) remain rejected
+  under this ADR; their revisit triggers are unchanged. ADR 0002 adds its
+  own revisit triggers for the helper-based tier; it does not grant
+  permission for a resident runtime.

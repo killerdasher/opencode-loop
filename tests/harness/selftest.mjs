@@ -32,7 +32,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildFixture, hashUserFiles, runFixtureTest, removeFixture, findBash, commitFixturePaths, CASE_IDS } from './fixtures.mjs';
 import { parseTranscript, collectDiffFiles, writeReports } from './transcript.mjs';
 import { evaluate, STATUS } from './checks.mjs';
@@ -73,7 +73,7 @@ function checkStatus(meta, f, checkId) {
   return found ? found.status : 'MISSING';
 }
 
-function main() {
+async function main() {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-harness-selftest-'));
   const built = [];
 
@@ -464,6 +464,850 @@ function main() {
   check('verdict:safety-violation-is-FAIL', v2.verdict === STATUS.FAIL, `verdict=${v2.verdict}`);
 
   // ---------------------------------------------------------------------
+  // 4b. Continuity helper (P1, ADR 0002) - tests the REAL implementation
+  //     imported from scripts/continuity.mjs, never a mirrored model.
+  //     Covers: schema/transition/identity validation, atomic-write recovery,
+  //     archive retention, secret refusal, CLI exit-code contract.
+  // ---------------------------------------------------------------------
+  const continuityPath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'continuity.mjs');
+  const C = await import(pathToFileURL(continuityPath).href);
+
+  const liveFile = (dir) => path.join(dir, '.loop', 'continuity.json');
+  const contProject = (tag) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `loop-cont-${tag}-`));
+    return dir;
+  };
+
+  // init: creates an ACTIVE gen-1 state
+  {
+    const d = contProject('init');
+    const r = C.opInitialize(d, { objective: 'P1 unit run' });
+    check('continuity:init-creates-active',
+      r.ok && r.state.status === 'ACTIVE' && r.state.integrity === 'VALID'
+      && r.state.generation === 1 && r.state.schemaVersion === C.SCHEMA_VERSION
+      && fs.existsSync(liveFile(d)),
+      r.ok ? `gen=${r.state.generation}` : JSON.stringify(r));
+    const again = C.opInitialize(d, { objective: 'duplicate refusal' });
+    check('continuity:init-refuses-existing-run',
+      again.ok === false && again.reason.includes('refusing to overwrite'),
+      again.ok ? 'accepted (!)' : again.reason);
+  }
+
+  // runtime pause/resume through the real transition path bumps generation
+  {
+    const d = contProject('rt');
+    const started = C.opInitialize(d, { objective: 'generation subject' });
+    const paused = C.opTransition(d, 'pause', { reason: 'operator' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:pause-bumps-generation',
+      started.ok && paused.ok && paused.state.status === 'PAUSED'
+      && started.state.generation === 1 && inspect.state.generation === 2,
+      `gen ${started.state.generation}->${inspect.state.generation}`);
+    const resumed = C.opTransition(d, 'resume');
+    const resumedInspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:resume-returns-to-active',
+      resumed.ok && resumed.state.status === 'ACTIVE' && resumedInspect.state.generation === 3);
+  }
+
+  // corrupt JSON: CORRUPT integrity, refuse-not-wipe (byte-for-byte preservat.
+  {
+    const d = contProject('corrupt');
+    const r = C.opInitialize(d, { objective: 'victim run' });
+    const original = fs.readFileSync(liveFile(d), 'utf8');
+    fs.writeFileSync(liveFile(d), '{"schemaVersion": 1, "truncat');
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const after = fs.readFileSync(liveFile(d), 'utf8');
+    check('continuity:corrupt-json-flagged',
+      inspect.readStatus === 'unparseable' && inspect.integrity === 'CORRUPT'
+      && inspect.identity === 'unknown',
+      JSON.stringify(inspect.readStatus));
+    check('continuity:corrupt-never-overwritten',
+      after === '{"schemaVersion": 1, "truncat',
+      'file content preserved in place, untouched by inspection');
+    const opStart = C.opTransition(d, 'pause');
+    check('continuity:corrupt-transition-blocked',
+      opStart.ok === false && opStart.blocked === true,
+      `reason: ${opStart.reason || ''}`);
+    // restoring the original bytes restores a VALID state: no data was lost
+    fs.writeFileSync(liveFile(d), original);
+    check('continuity:corrupt-recoverable-restored',
+      C.inspectState(d, { expectedRoot: d }).readStatus === 'ok');
+  }
+
+  // unsupported schema version: rejected, never silently downgraded/emptied
+  {
+    const d = contProject('schema');
+    const future = JSON.stringify(C.createState({ objective: 'future version' }), null, 2).replace('"schemaVersion": 1', '"schemaVersion": 99');
+    fs.mkdirSync(path.join(d, '.loop'), { recursive: true });
+    fs.writeFileSync(liveFile(d), future);
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const after = fs.readFileSync(liveFile(d), 'utf8');
+    check('continuity:unsupported-schema-rejected',
+      inspect.readStatus === 'unsupported-schema-version' && inspect.integrity === 'CORRUPT',
+      JSON.stringify(inspect.readStatus));
+    check('continuity:unsupported-schema-preserved', after === future, 'bytes identical');
+  }
+
+  // documented transition table: every documented pair succeeds
+  {
+    const documented = [
+      ['ACTIVE', 'pause', 'PAUSED'],
+      ['ACTIVE', 'block', 'BLOCKED'],
+      ['ACTIVE', 'recovery-flag', 'RECOVERY_REQUIRED'],
+      ['ACTIVE', 'complete', 'COMPLETED'],
+      ['ACTIVE', 'cancel', 'CANCELLED'],
+      ['PAUSED', 'resume', 'ACTIVE'],
+      ['PAUSED', 'block', 'BLOCKED'],
+      ['PAUSED', 'recovery-flag', 'RECOVERY_REQUIRED'],
+      ['PAUSED', 'cancel', 'CANCELLED'],
+      ['RECOVERY_REQUIRED', 'resolve-recovery', 'ACTIVE'],
+      ['RECOVERY_REQUIRED', 'cancel', 'CANCELLED'],
+      ['BLOCKED', 'unblock', 'ACTIVE'],
+      ['BLOCKED', 'cancel', 'CANCELLED'],
+      ['ABSENT', 'init', 'ACTIVE'],
+    ];
+    const bad = documented.filter(([from, ev, to]) => {
+      const t = C.checkTransition(from, ev);
+      return !(t.ok && t.to === to);
+    });
+    check('continuity:transitions-table-complete', bad.length === 0, bad.length ? JSON.stringify(bad) : `${documented.length} documented transitions`);
+  }
+
+  // invalid transitions are ERRORS (never silent no-ops)
+  {
+    const invalid = [
+      ['COMPLETED', 'pause'], ['COMPLETED', 'cancel'], ['COMPLETED', 'complete'],
+      ['CANCELLED', 'resume'], ['CANCELLED', 'cancel'], ['PAUSED', 'complete'],
+      ['ACTIVE', 'bogus-event'], ['ACTIVE', 'unblock'],
+    ];
+    const bad = invalid.filter(([from, ev]) => C.checkTransition(from, ev).ok);
+    check('continuity:invalid-transitions-error', bad.length === 0, bad.length ? JSON.stringify(bad) : 'all invalid pairs rejected');
+  }
+
+  // integrity dimension is data the commands manage; the helper must accept
+  // the documented values and refuse the undocumented ones
+  {
+    const d = contProject('stale');
+    C.opInitialize(d, { objective: 'stale-integrity subject' });
+    const marked = C.opUpdate(d, { integrity: 'SUSPECTED_STALE' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:stale-integrity-persisted',
+      marked.ok && inspect.state.integrity === 'SUSPECTED_STALE',
+      `integrity=${inspect.state.integrity}`);
+    const bogus = C.validateStateObject({ ...inspect.state, integrity: 'NOT_SO_BAD' });
+    check('continuity:undocumented-integrity-rejected',
+      bogus.ok === false && bogus.errors.some((e) => e.includes('integrity')),
+      JSON.stringify(bogus.errors.slice(0, 2)));
+  }
+
+  // task identity is an enforced derivation invariant (P1 gap closed fresh:
+  // a drifted or hand-edited taskId is now invalid, never format-tolerated)
+  {
+    const d = contProject('taskid');
+    C.opInitialize(d, { objective: 'task identity subject' });
+    const okObj = JSON.parse(fs.readFileSync(liveFile(d), 'utf8'));
+    const vValid = C.validateStateObject(okObj);
+    check('continuity:task-identity-invariant-holds',
+      vValid.ok === true && C.taskIdFor(okObj.objective, okObj.createdAt) === okObj.taskId,
+      `taskId=${okObj.taskId}`);
+    // tamper the objective ON DISK (simulates an edited state file): the
+    // recorded taskId can no longer be derived from the objective
+    const tampered = JSON.stringify(
+      { ...okObj, stopReason: null, objective: `${okObj.objective} (altered in editor)` },
+      null, 2,
+    );
+    fs.writeFileSync(liveFile(d), tampered);
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    const attempted = C.opTransition(d, 'pause');
+    check('continuity:task-identity-tamper-rejected',
+      inspect.readStatus === 'invalid' && inspect.integrity === 'CORRUPT'
+      && inspect.errors.some((e) => e.includes('taskId does not match its derivation'))
+      && attempted.ok === false && attempted.blocked === true
+      && fs.readFileSync(liveFile(d), 'utf8') === tampered,
+      `readStatus=${inspect.readStatus}, bytes preserved on disk`);
+  }
+
+  // terminal states archive and are RETAINED across new runs (never deleted)
+  {
+    const d = contProject('archive');
+    C.opInitialize(d, { objective: 'first doomed run' });
+    const cancelled = C.opTransition(d, 'cancel', { reason: 'owner stopped it' });
+    const liveGone = !fs.existsSync(liveFile(d));
+    const archive = path.join(d, '.loop', 'archive', `${cancelled.state.taskId}.json`);
+    const archivedOk = fs.existsSync(archive)
+      && JSON.parse(fs.readFileSync(archive, 'utf8')).stopReason === 'owner stopped it';
+    const second = C.opInitialize(d, { objective: 'fresh second run' });
+    const retained = fs.readdirSync(path.join(d, '.loop', 'archive')).length === 1;
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:cancel-archives',
+      cancelled.ok && cancelled.archived === true && liveGone && archivedOk,
+      `archived=${cancelled.ok && !!cancelled.archived} liveGone=${liveGone}`);
+    check('continuity:archive-retained-terminal-evidence',
+      second.ok && retained && inspect.state.taskId !== cancelled.state.taskId,
+      `second run gen ${inspect.state.generation}, archive intact`);
+  }
+
+  // RECOVERY_REQUIRED round-trip on the real file
+  {
+    const d = contProject('recovery');
+    C.opInitialize(d, { objective: 'recovery subject' });
+    const flagged = C.opTransition(d, 'recovery-flag', { reason: 'uncommitted work beyond checkpoint' });
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:recovery-flag-persists',
+      flagged.ok && inspect.state.status === 'RECOVERY_REQUIRED'
+      && inspect.state.recovery && inspect.state.recovery.reason === 'uncommitted work beyond checkpoint',
+      `status=${inspect.state.status}`);
+    const resolved = C.opTransition(d, 'resolve-recovery');
+    const resolvedInspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:recovery-resolve-back-to-active',
+      resolved.ok && resolvedInspect.state.status === 'ACTIVE'
+      && resolvedInspect.state.integrity === 'VALID');
+  }
+
+  // secret-shaped values are refused before anything is written
+  // Fake credential shapes are ASSEMBLED at runtime so the file text itself
+  // never contains a full match for the repo-wide secret scanner.
+  {
+    const fakeGh = 'ghp_' + '0123456789abcdef'.repeat(2) + 'abcd';
+    const fakeAnt = 'sk-ant-' + 'a'.repeat(40);
+    const dGh = contProject('secrets-gh');
+    const sGh = C.opInitialize(dGh, { objective: `run with ${fakeGh} inside` });
+    const dPw = contProject('secrets-pw');
+    const sPw = C.opInitialize(dPw, { objective: 'rotate password ZgL6vJ7pQ3dK1mZx9tRa tonight' });
+    const dOk = contProject('secrets-clean');
+    const sOk = C.opInitialize(dOk, { objective: 'Fix range parser off-by-one' });
+    check('continuity:secret-shaped-values-refused',
+      sGh.ok === false && sGh.blocked === true && !fs.existsSync(liveFile(dGh))
+      && sPw.ok === false && !fs.existsSync(liveFile(dPw)),
+      JSON.stringify({ gh: sGh.ok ? 'accepted(!)' : sGh.blocked, pw: sPw.ok ? 'accepted(!)' : sPw.blocked }));
+    check('continuity:clean-objective-passes-scan',
+      sOk.ok === true && fs.existsSync(liveFile(dOk)), `status ok=${sOk.ok}`);
+    // a state file that was VALID will refuse an update carrying a secret
+    const poisoned = C.opUpdate(dOk, { stopReason: `reminder: use key ${fakeAnt}` });
+    const intact = JSON.parse(fs.readFileSync(liveFile(dOk), 'utf8'));
+    check('continuity:update-refuses-secret-patch',
+      poisoned.ok === false && poisoned.blocked === true && intact.status === 'ACTIVE' && intact.stopReason === null,
+      intact.stopReason === null ? 'state unchanged' : JSON.stringify(intact.stopReason));
+  }
+
+  // atomic writes: success leaves no temps; interrupted temps are reported
+  {
+    const d = contProject('temps');
+    const started = C.opInitialize(d, { objective: 'temp audit run' });
+    C.opTransition(d, 'pause'); // now gen 2
+    const noTemps = C.listTemps(d).length;
+    check('continuity:atomic-write-no-temp-on-success',
+      started.ok && noTemps === 0 && C.inspectState(d, { expectedRoot: d }).readStatus === 'ok',
+      `temps after clean writes=${noTemps}`);
+    // simulate a killed process mid atomic write: (a) a fully-written but
+    // unrenamed temp of the PREVIOUS generation, (b) a torn, unparseable temp.
+    const supersededTemp = path.join(d, '.loop', 'continuity.json.tmp-1-abbadecd');
+    fs.writeFileSync(supersededTemp, JSON.stringify({ schemaVersion: C.SCHEMA_VERSION, generation: 1 }));
+    const tornTemp = path.join(d, '.loop', 'continuity.json.tmp-3-c0ffee00');
+    fs.writeFileSync(tornTemp, '{"schemaVersion": 1, "obje');
+    const inspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:interrupted-temps-reported',
+      inspect.temps.length === 2
+      && inspect.temps.includes(supersededTemp) && inspect.temps.includes(tornTemp)
+      && inspect.state.generation === 2,
+      JSON.stringify(inspect.temps.map((t) => path.basename(t))));
+    // repair deletes only provably SUPERSEDED temps (for the live generation);
+    // unparseable temps are REFUSED - they may hold unrecorded work
+    const repaired = C.repairTemps(d);
+    const afterTemps = C.listTemps(d);
+    check('continuity:repair-removes-superseded-temps-only',
+      repaired.ok === false
+      && repaired.removed.length === 1 && repaired.removed[0] === path.basename(supersededTemp)
+      && repaired.refused.length === 1 && repaired.refused[0] === path.basename(tornTemp)
+      && afterTemps.length === 1 && afterTemps[0] === tornTemp
+      && fs.existsSync(liveFile(d)) === true,
+      JSON.stringify(repaired));
+  }
+
+  // identity gate: another project's state is refused and never mutated
+  {
+    const a = contProject('identity-a');
+    C.opInitialize(a, { objective: 'belongs to A' });
+    const b = contProject('identity-b');
+    fs.cpSync(path.join(a, '.loop'), path.join(b, '.loop'), { recursive: true });
+    const before = fs.readFileSync(liveFile(b), 'utf8');
+    const inspect = C.inspectState(b, { expectedRoot: b });
+    const attempted = C.opTransition(b, 'pause');
+    const after = fs.readFileSync(liveFile(b), 'utf8');
+    check('continuity:identity-mismatch-refused',
+      inspect.identity === 'mismatch' && attempted.ok === false
+      && before === after,
+      `identity=${inspect.identity}`);
+  }
+
+  // sanitized URL fingerprints: credentials never reach disk
+  {
+    const withCreds = 'https://ci-bot:s3cret-token@github.example/org/private-repo.git';
+    const s = C.sanitizeRemoteUrl(withCreds);
+    const withoutCreds = 'https://github.example/org/private-repo.git';
+    const fpRaw = C.fingerprint({ originUrl: withCreds });
+    const fpClean = C.fingerprint({ originUrl: withoutCreds });
+    check('continuity:url-userinfo-sanitized',
+      s.ok && !s.sanitized.includes('s3cret-token') && !s.sanitized.includes('ci-bot')
+      && s.sanitized === withoutCreds,
+      `sanitized=${s.sanitized}`);    check('continuity:fingerprint-is-credential-free',
+      fpRaw.ok && fpClean.ok
+      && /^[0-9a-f]{16}$/.test(fpRaw.originFingerprint)
+      && fpRaw.originFingerprint === fpClean.originFingerprint
+      && !JSON.stringify(fpRaw).includes('s3cret'),
+      `originFingerprint=${fpRaw.ok ? fpRaw.originFingerprint : '?'}`);
+  }
+
+  // fingerprint: 'private-repo' and 'private-repo'.git must NOT collide
+  {
+    const fpA = C.fingerprint({ originUrl: 'https://x.example/a/private-repo' });
+    const fpB = C.fingerprint({ originUrl: 'https://x.example/a/private-repo.git' });
+    check('continuity:fingerprint-differentiates-repos',
+      fpA.ok && fpB.ok && fpA.originFingerprint !== fpB.originFingerprint);
+  }
+
+  // CLI exit-code contract (the real command surface the commands call)
+  {
+    const d = contProject('cli');
+    const helperPath = continuityPath;
+    const run = (...argv) => spawnSync(process.execPath, [helperPath, ...argv], { encoding: 'utf8' });
+    const init = run('init', d, '--objective', 'cli contract run');
+    const initJson = JSON.parse(init.stdout);
+    check('continuity:cli-init-contract',
+      init.status === 0 && initJson.ok === true && initJson.state.status === 'ACTIVE',
+      `status=${init.status}`);
+    const paused = run('transition', d, '--event', 'pause', '--reason', 'session closing');
+    const pausedJson = JSON.parse(paused.stdout);
+    check('continuity:cli-transition-contract',
+      paused.status === 0 && pausedJson.ok && pausedJson.state.status === 'PAUSED');
+    const bad = run('transition', d, '--event', 'complete');
+    check('continuity:cli-invalid-transition-exit-1', bad.status === 1,
+      JSON.parse(bad.stdout).reason);
+    const inspect = run('inspect', d);
+    check('continuity:cli-inspect-exit-0', inspect.status === 0 && JSON.parse(inspect.stdout).readStatus === 'ok');
+    // corrupt on purpose -> BLOCKED class -> exit 2
+    fs.writeFileSync(liveFile(d), 'not json at all');
+    const blocked = run('inspect', d);
+    check('continuity:cli-corrupt-exit-2', blocked.status === 2 && JSON.parse(blocked.stdout).readStatus === 'unparseable');
+    const usage = run('init');
+    check('continuity:cli-missing-arg-exit-3', usage.status === 3);
+  }
+
+  // ---------------------------------------------------------------------
+  // 4d. Evaluator - deterministic completion evaluation (P4)
+  // ---------------------------------------------------------------------
+  // The evaluator derives PASS/FAIL/BLOCKED/NEEDS_REVIEW from the evidence
+  // manifest at <project>/.loop/verification.json. Guarantees under test:
+  // missing or advisory-only verification never silently becomes PASS, a
+  // recorded PASS is exposed by --fresh re-execution of the real command,
+  // and a model-written completion claim carries no weight by itself.
+  const EV = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs')).href);
+  const verFile = (d) => path.join(d, '.loop', 'verification.json');
+  const nodeExit = (code) => ({ cmd: [process.execPath, '-e', `process.exit(${code})`] });
+
+  // positive: fully covered MUST criteria with deterministic evidence -> PASS
+  {
+    const d = contProject('eval-positive');
+    const bound = C.opInitialize(d, { objective: 'evaluator positive subject' });
+    fs.writeFileSync(path.join(d, 'deliverable.txt'), 'o');
+    const rec = EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-deliverable', requirement: 'MUST', text: 'deliverable exists', artifact: 'deliverable.txt' },
+        { id: 'must-tests', requirement: 'MUST', text: 'suite green', },
+      ],
+      evidence: [{ id: 'ev-tests', verdict: 'PASS', criterionIds: ['must-deliverable', 'must-tests'], exec: nodeExit(0) }],
+      blockers: [{ id: 'bl-none', text: 'no open blocker', resolved: true }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:positive-deterministic-pass',
+      rec.ok === true && outcome.outcome === 'PASS' && outcome.reasons.length === 0,
+      `outcome=${outcome.outcome}`);
+    check('evaluator:continuity-binding-adoption',
+      rec.manifest.taskId === bound.state.taskId,
+      `bound=${rec.manifest.taskId}`);
+    const fresh = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:positive-fresh-reexecutes',
+      fresh.outcome === 'PASS' && fresh.reRun.length === 1 && fresh.reRun[0].reExecuted === true
+      && fresh.reRun[0].verdict === 'PASS',
+      `reRun verdict=${fresh.reRun[0]?.verdict}`);
+  }
+
+  // negative: a FAIL evidence verdict is decisive
+  {
+    const d = contProject('eval-fail');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-fail', requirement: 'MUST', text: 'suite green' }],
+      evidence: [{ id: 'ev-fail', verdict: 'FAIL', criterionIds: ['must-fail'], note: 'regression in range parser' }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-evidence-fail-is-FAIL',
+      outcome.outcome === 'FAIL' && outcome.reasons.some((r) => r.code === 'evidence-fail'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: MUST with missing verification -> BLOCKED (never PASS)
+  {
+    const d = contProject('eval-missing');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-uncovered', requirement: 'MUST', text: 'unverified criterion' }],
+      evidence: [{ id: 'ev-other', verdict: 'PASS', criterionIds: [] }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-missing-must-BLOCKED',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'must-missing-verification'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: MUST covered only by advisory evidence caps at NEEDS_REVIEW
+  {
+    const d = contProject('eval-advisory');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-advisory', requirement: 'MUST', text: 'model-reviewed claim' }],
+      evidence: [{ id: 'ev-advisory', verdict: 'PASS', criterionIds: ['must-advisory'], note: 'reviewed by the agent' }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-advisory-only-MUST-NEEDS_REVIEW',
+      outcome.outcome === 'NEEDS_REVIEW'
+      && outcome.reasons.some((r) => r.code === 'must-advisory-only'),
+      `outcome=${outcome.outcome} (never PASS from prose)`);
+  }
+
+  // negative: absent deliverable artifact + unresolved blocker + open HIGH
+  {
+    const d = contProject('eval-blocked');
+    EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-crit', requirement: 'MUST', text: 'suite green' },
+        { id: 'must-artifact', requirement: 'MUST', text: 'doc exists', artifact: 'docs/gap.md' },
+      ],
+      evidence: [{ id: 'ev-1', verdict: 'PASS', criterionIds: ['must-crit'], exec: nodeExit(0) },
+        { id: 'ev-2', verdict: 'BLOCKED', criterionIds: ['must-artifact'] }],
+      blockers: [{ id: 'bl-1', text: 'awaiting owner decision on flags', resolved: false }],
+      findings: [{ id: 'fn-1', severity: 'HIGH', text: 'unreviewed injection path', resolved: false }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-blockers-and-gaps-BLOCKED',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'must-missing-verification' && r.detail.includes('must-artifact'))
+      && outcome.reasons.some((r) => r.code === 'unresolved-blocker')
+      && outcome.reasons.some((r) => r.code === 'open-severity-finding' && r.detail.includes('HIGH')),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: SHOULD uncovered caps at NEEDS_REVIEW; resolving everything recovers PASS
+  {
+    const d = contProject('eval-recover');
+    EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-core', requirement: 'MUST', text: 'suite green' },
+        { id: 'should-docs', requirement: 'SHOULD', text: 'guides updated' },
+      ],
+      evidence: [{ id: 'ev-core', verdict: 'PASS', criterionIds: ['must-core'], exec: nodeExit(0) }],
+    });
+    const capped = EV.deriveOutcome(d);
+    check('evaluator:negative-should-uncovered-NEEDS_REVIEW',
+      capped.outcome === 'NEEDS_REVIEW' && capped.reasons.some((r) => r.code === 'should-uncovered'),
+      `outcome=${capped.outcome}`);
+    EV.recordManifest(d, {
+      evidence: [{ id: 'ev-docs', verdict: 'PASS', criterionIds: ['should-docs'], exec: nodeExit(0) }],
+    });
+    const recovered = EV.deriveOutcome(d);
+    check('evaluator:positive-recovers-to-PASS',
+      recovered.outcome === 'PASS',
+      `outcome=${recovered.outcome}`);
+  }
+
+  // adversarial: a recorded PASS with a command that actually fails is exposed
+  // by --fresh - the tamper-verdict path mirrors an unverified self-report
+  {
+    const d = contProject('eval-tamper');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-tamper', requirement: 'MUST', text: 'suite green' }],
+      evidence: [{ id: 'ev-tamper', verdict: 'PASS', criterionIds: ['must-tamper'], exec: nodeExit(7) }],
+    });
+    const blind = EV.deriveOutcome(d);
+    const exposed = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:adversarial-tampered-verdict-exposed',
+      blind.outcome === 'PASS' && exposed.outcome === 'FAIL'
+      && exposed.reRun[0].exit === 7 && exposed.reRun[0].verdict === 'FAIL',
+      `blind=${blind.outcome}, fresh=${exposed.outcome}, exit=${exposed.reRun[0].exit}`);
+  }
+
+  // adversarial: cross-run binding - a foreign manifest must not author this run
+  {
+    const d = contProject('eval-cross-task');
+    C.opInitialize(d, { objective: 'live run owns this project' });
+    const foreign = {
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: 'ffffffffffffffff',
+      criteria: [{ id: 'must-x', requirement: 'MUST', text: 'foreign criteria' }],
+      evidence: [{ id: 'ev-x', verdict: 'PASS', criterionIds: ['must-x'], exec: nodeExit(0) }],
+      findings: [],
+      blockers: [],
+    };
+    fs.mkdirSync(path.join(d, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(d), JSON.stringify(foreign, null, 2));
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:adversarial-cross-task-refused',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'cross-run-evidence'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // adversarial: a manifest planted beside ANOTHER project's state copy - the
+  // task id matches, but the state's recorded project root does not - refused
+  {
+    const dA = contProject('eval-foreign-a');
+    C.opInitialize(dA, { objective: 'state root A' });
+    const stateA = JSON.parse(fs.readFileSync(liveFile(dA), 'utf8'));
+    const dB = contProject('eval-foreign-b');
+    fs.cpSync(path.join(dA, '.loop'), path.join(dB, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dB), JSON.stringify({
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: stateA.taskId, // equal ids - only identity catches this
+      criteria: [{ id: 'must-fake', requirement: 'MUST', text: 'planted criteria' }],
+      evidence: [{ id: 'ev-fake', verdict: 'PASS', criterionIds: ['must-fake'], exec: nodeExit(0) }],
+      findings: [],
+      blockers: [],
+    }, null, 2));
+    const outcome = EV.deriveOutcome(dB);
+    check('evaluator:adversarial-foreign-identity-refused',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'project-identity-not-reconciled'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // adversarial: zero criteria and corrupt manifests never derive PASS
+  {
+    const dEmpty = contProject('eval-empty');
+    fs.mkdirSync(path.join(dEmpty, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dEmpty), JSON.stringify({
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: null,
+      criteria: [],
+      evidence: [{ id: 'ev-empty', verdict: 'PASS', criterionIds: [] }],
+      findings: [],
+      blockers: [],
+    }, null, 2));
+    const noCriteria = EV.deriveOutcome(dEmpty);
+    check('evaluator:adversarial-no-criteria-never-PASS',
+      noCriteria.outcome === 'BLOCKED' && noCriteria.reasons.some((r) => r.code === 'no-criteria-declared'),
+      `outcome=${noCriteria.outcome}`);
+    const dCorrupt = contProject('eval-corrupt');
+    fs.mkdirSync(path.join(dCorrupt, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dCorrupt), '{"schemaVersion":1,"tool":"loop-ev');
+    const before = fs.readFileSync(verFile(dCorrupt), 'utf8');
+    const corruptOut = EV.deriveOutcome(dCorrupt);
+    const refused = EV.recordManifest(dCorrupt, { criteria: [{ id: 'a', requirement: 'MUST', text: 'x' }] });
+    const after = fs.readFileSync(verFile(dCorrupt), 'utf8');
+    check('evaluator:adversarial-corrupt-manifest-preserved-BLOCKED',
+      corruptOut.outcome === 'BLOCKED'
+      && refused.ok === false && refused.blocked === true
+      && before === after,
+      `outcome=${corruptOut.outcome}, bytes preserved=${before === after}`);
+  }
+
+  // CLI contract: secret recording is refused exit 2 (fail-closed, assembled at runtime)
+  {
+    const d = contProject('eval-secret');
+    const run = (...argv) => spawnSync(process.execPath,
+      [path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs'), ...argv],
+      { encoding: 'utf8', input: '' });
+    const patch = JSON.stringify({
+      criteria: [{ id: 'must-leak', requirement: 'MUST', text: 'deploy with ' + 'ghp_' + '0123456789abcdef'.repeat(2) + 'ab3d' }],
+    });
+    const secretRun = spawnSync(process.execPath,
+      [path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs'), 'record', d, '--from-stdin'],
+      { encoding: 'utf8', input: patch });
+    const absent = !fs.existsSync(verFile(d));
+    const help = run('help');
+    check('evaluator:cli-secret-record-refused',
+      secretRun.status === 2 && absent && JSON.parse(secretRun.stdout).blocked === true,
+      `status=${secretRun.status}`);
+    check('evaluator:cli-help-lists-contract',
+      help.status === 0
+      && ['record', 'outcome', '--fresh', 'PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW']
+        .every((s) => help.stdout.includes(s)),
+      'usage lists subcommands + outcome vocabulary');
+  }
+
+  // ---------------------------------------------------------------------
+  // 4e. Task profiles (P5) - resolver + modular references on fixtures
+  // ---------------------------------------------------------------------
+  // Profiles tune the nine-stage workflow's emphasis only; they never scope,
+  // never weaken safeguards, and are selected from explicit user intent.
+  const PR = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'profiles.mjs')).href);
+
+  // positive: all five profiles resolve with a reference that exists on disk
+  {
+    const resolved = PR.PROFILES.map((name) => PR.resolveProfile(name.toLowerCase()));
+    check('profiles:all-five-resolve-with-references',
+      resolved.every((x) => x.ok === true && PR.PROFILES.includes(x.profile)
+        && x.reference !== null && fs.existsSync(x.reference) === true
+        && fs.readFileSync(x.reference, 'utf8').length > 200)
+        && resolved.every((x) => PR.PROFILES.includes(x.profile)),
+      `each of ${resolved.length} -> file exists`);
+  }
+
+  // negative: an unknown profile is refused, never silently defaulted
+  {
+    const bad = PR.resolveProfile('REWRITE');
+    const bad2 = PR.resolveProfile('nope-mode');
+    check('profiles:unknown-names-refused',
+      bad.ok === false && bad.valid.length === 5 && bad2.ok === false
+      && bad.reason.includes('unknown task profile'),
+      JSON.stringify(bad.reason));
+  }
+
+  // positive: explicit auto / missing flag -> generic loop, never a guess
+  {
+    const auto = PR.resolveProfile('auto');
+    const none = PR.resolveProfile(undefined);
+    const noneStr = PR.resolveProfile('');
+    check('profiles:auto-and-absent-are-generic',
+      auto.ok && auto.profile === 'GENERIC_LOOP' && auto.reference === null
+      && none.ok && none.profile === 'GENERIC_LOOP' && noneStr.ok
+      && noneStr.profile === 'GENERIC_LOOP',
+      'no profile may be invented by the resolver');
+  }
+
+  // positive: case + separator tolerance
+  {
+    const c1 = PR.resolveProfile('BUILD');
+    const c2 = PR.resolveProfile('debug');
+    const c3 = PR.resolveProfile('refactor');
+    const c4 = PR.resolveProfile('  AUDIT  ');
+    check('profiles:normalization-tolerant',
+      c1.ok && c1.profile === 'BUILD' && c2.profile === 'DEBUG'
+      && c3.profile === 'REFACTOR' && c4.profile === 'AUDIT',
+      'case/space tolerant, resolution deterministic');
+  }
+
+  // scope preservation: --profile flag is stripped; the task text is verbatim
+  {
+    const ws = 'fix the  range\n  off-by-one   bug';
+    const withFlag = `--profile debug   ${ws}`;
+    const s = PR.stripProfileFlag(withFlag);
+    check('profiles:flag-stripped-scope-verbatim',
+      s.ok === true && s.profile === 'debug'
+      && s.taskText === `   ${ws}`, // the separating whitespace belongs to the task and is preserved
+      `task preserved: ${JSON.stringify(s.taskText)}`);
+    const untouched = 'build a parser  --profile=not-a-real-flag';
+    const u = PR.stripProfileFlag(untouched);
+    check('profiles:non-profile-flags-preserved',
+      u.ok === true && u.profile === null && u.taskText === untouched,
+      `other flags untouched: ${JSON.stringify(u.taskText)}`);
+  }
+
+  // negative: --profile without a value refused (never silently defaults)
+  {
+    const noval = PR.stripProfileFlag('do a thing --profile');
+    check('profiles:missing-flag-value-refused',
+      noval.ok === false && noval.valid.length === 5,
+      JSON.stringify(noval.reason));
+  }
+
+  // resolution from a full /loop task line: last-wins + correction, scope held
+  {
+    const task = 'restructure the parser --profile refactor --mode deep';
+    const r1 = PR.resolveFromTask(task);
+    const dual = PR.resolveFromTask('--profile audit fix bug --profile migrate task text');
+    check('profiles:resolve-from-task-last-wins-scope-preserved',
+      r1.ok === true && r1.profile === 'REFACTOR'
+      // verbatim: only the flag trio is removed; whitespace runs stay as given
+      && r1.taskText === 'restructure the parser  --mode deep'
+      && dual.ok === true && dual.profile === 'MIGRATE'
+      && dual.corrections.length === 1
+      && dual.taskText === ' fix bug  task text',
+      `last-wins=${dual.profile}, correction=${dual.corrections[0]}`);
+  }
+
+  // CLI contract: resolve explicit -> 0; unknown -> 4; strip -> 0
+  {
+    const ePath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'profiles.mjs');
+    const run = (...args) => spawnSync(process.execPath, [ePath, ...args], { encoding: 'utf8' });
+    const okRun = run('resolve', 'audit');
+    check('profiles:cli-resolve-explicit',
+      okRun.status === 0 && JSON.parse(okRun.stdout).profile === 'AUDIT',
+      `status=${okRun.status}`);
+    const badRun = run('resolve', 'nonsense');
+    check('profiles:cli-refuses-unknown',
+      badRun.status === 4 && JSON.parse(badRun.stdout).valid.length === 5,
+      `status=${badRun.status}`);
+    const stripRun = run('strip', '--task', 'halve the module --profile refactor');
+    check('profiles:cli-strip',
+      stripRun.status === 0 && JSON.parse(stripRun.stdout).profile === 'refactor'
+      // verbatim: the trailing separator before the removed flag stays
+      && JSON.parse(stripRun.stdout).taskText === 'halve the module ',
+      `status=${stripRun.status}`);
+  }
+
+  // safeguard anchor: every profile explicitly binds the universal safeguards
+  {
+    const files = ['build', 'debug', 'refactor', 'audit', 'migrate'];
+    const refDir = path.resolve(HARNESS_DIR, '..', '..', '.opencode', 'skills', 'loop-engine', 'references');
+    const missing = files.filter((f) => {
+      const t = fs.readFileSync(path.join(refDir, 'profiles', `${f}.md`), 'utf8');
+      return !t.includes('<!-- Universal safeguards apply unchanged -->');
+    });
+    check('profiles:safeguards-anchored-in-every-profile', missing.length === 0,
+      missing.length ? `missing anchor: ${missing.join(', ')}` : 'all five bind the anchors');
+  }
+
+  // ---------------------------------------------------------------------
+  // 4f. Model capability evaluation (P6) - framework on fixture records
+  // ---------------------------------------------------------------------
+  // No model credentials exist in this session (token-gated by the standing
+  // Case J park): the framework is exercised offline on FIXTURE records -
+  // which is exactly the core-project-test path the P6 owner brief requires
+  // to stay free of any paid API. A capability profile from a real model
+  // requires operator-initiated evaluation runs; none exist in this repo.
+  {
+    // known from 4d/4e imports: EV, PR; add the model-eval module
+  const MEV = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'model-eval.mjs')).href);
+  const dir = contProject('model-eval');
+    fs.mkdirSync(dir, { recursive: true });
+    // pinned task set: full dimension coverage + stable hash
+    const ts = MEV.loadTaskSet();
+    check('modeleval:taskset-covers-all-eight-dimensions',
+      ts.ok === true && JSON.stringify(ts.tasks.map((t) => t.dimension).sort()) === JSON.stringify([...MEV.DIMENSIONS].sort())
+      && /^[0-9a-f]{16}$/.test(ts.hash) && ts.hash === MEV.loadTaskSet().hash,
+      `hash=${ts.hash}, tasks=${ts.tasks.length}`);
+    // record init: fields pinned + deterministic runId + no overwrite
+    const initA = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-large', testedAt: '2026-11-07T10:00:00Z' });
+    const initA2 = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-large', testedAt: '2026-11-07T10:00:00Z' });
+    const recA = JSON.parse(fs.readFileSync(path.join(dir, `model-eval-${initA.runId}.json`), 'utf8'));
+    check('modeleval:record-fields-pinned-deterministic',
+      initA.ok && initA2.ok === false && recA.runId === initA.runId
+      && JSON.stringify(Object.keys(recA).sort()) === JSON.stringify([
+        'completed', 'environment', 'modelId', 'provider', 'runId',
+        'schemaVersion', 'taskSetHash', 'taskSetVersion', 'tasks', 'testedAt', 'tool',
+      ]),
+      `init refused duplicate=${!initA2.ok}`);
+    // inadequate samples cannot derive; completeness gate; limitations required
+    {
+      const prof = MEV.deriveProfile(dir, initA.runId);
+      check('modeleval:uncompleted-record-derives-nothing',
+        prof.ok === false && prof.blocked === true,
+        `reason=${JSON.stringify(prof.reason).slice(0, 70)}`);
+    }
+    // negative: unknown field rejected (marketing prose is not evidence)
+    {
+      const bad = { ...recA, marketing: 'agentic wizard model' };
+      const v = MEV.validateRecord(bad);
+      fs.writeFileSync(path.join(dir, `model-eval-${initA.runId}.json`), JSON.stringify(recA, null, 2)); // keep clean
+      check('modeleval:unknown-field-refused',
+        v.ok === false && v.errors.some((e) => e.includes('marketing')),
+        'provider/model names are data; claims about capability are not');
+    }
+    // negative: secret-shaped content in the record refused
+    {
+      const sec = MEV.addTaskResult(dir, initA.runId, {
+        id: 'sec-task', dimension: 'security-reasoning', result: 'PASS',
+        notes: 'copy of key ' + 'ghp_' + '0123456789abcdef'.repeat(2) + 'zp9w',
+      });
+      check('modeleval:secret-refused-fail-closed',
+        sec.ok === false && sec.blocked === true,
+        (sec.reason || '').slice(0, 40));
+    }
+    // positive path: 24 adequate tasks -> completed -> derived profile
+    {
+      const dims = MEV.DIMENSIONS;
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) {
+          MEV.addTaskResult(dir, initA.runId, {
+            id: `${dim}-${n}`, dimension: dim,
+            result: n % 2 === 0 ? 'PASS' : 'PARTIAL',
+            evidence: `evidence/${dim}-${n}.md`,
+          });
+        }
+      }
+      const noLimit = MEV.completeRecord(dir, initA.runId, undefined);
+      const withLimit = MEV.completeRecord(dir, initA.runId, 'fixture record: n=3 per dimension (threshold); single environment; one session');
+      check('modeleval:completion-requires-limitations',
+        noLimit.ok === false && withLimit.ok === true,
+        `limitations gate=${!noLimit.ok}`);
+      const prof = MEV.deriveProfile(dir, initA.runId);
+      const dimsDerived = Object.keys(prof.profile.dimensions);
+      check('modeleval:profile-from-completed-record',
+        prof.ok === true
+        && dimsDerived.length === 8
+        && dims.every((d) => dimsDerived.includes(d))
+        && prof.profile.sampleSize === 24
+        && prof.profile.evidenceBacked === 24
+        && Object.values(prof.profile.dimensions).every((d) => d.classification === 'EVIDENCED'),
+        `n=${prof.profile.sampleSize}, evidenceBacked=${prof.profile.evidenceBacked}`);
+      // completed records are immutable - derived profiles stay stable
+      const postComplete = MEV.addTaskResult(dir, initA.runId, { id: 'late-task', dimension: 'tool-calling', result: 'FAIL' });
+      check('modeleval:completed-record-immutable',
+        postComplete.ok === false && postComplete.blocked === true,
+        'no mutation after completion; profiles were derived from what was recorded');
+      // comparison: same taskset -> observed counts, no ranking keys anywhere
+      const initB = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-small', testedAt: '2026-11-07T11:00:00Z' });
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) {
+          MEV.addTaskResult(dir, initB.runId, { id: `b-${dim}-${n}`, dimension: dim, result: 'FAIL' });
+        }
+      }
+      MEV.completeRecord(dir, initB.runId, 'fixture record B');
+      const cmp = MEV.compareRecords(dir, initA.runId, initB.runId);
+      const cmpText = JSON.stringify(cmp.comparison ?? {});
+      check('modeleval:compare-no-ranking-no-winner',
+        cmp.ok === true
+        && !/"rank"/.test(cmpText) && !/"winner"/.test(cmpText) && !/"overall"/.test(cmpText)
+        && cmp.comparison.dimensions.every((d) => d.a.pass + d.a.partial + d.a.fail === d.b.pass + d.b.partial + d.b.fail)
+        && cmp.comparison.note.includes('no ranking'),
+        'observed counts with an explicit non-ranking disclaimer');
+      // mismatched task set: refused, never silently compared
+      const initC = MEV.initRecord(dir, { provider: 'other-corp', modelId: 'other-model', testedAt: '2026-11-07T12:00:00Z' });
+      const recFileC = path.join(dir, `model-eval-${initC.runId}.json`);
+      const recC = JSON.parse(fs.readFileSync(recFileC, 'utf8'));
+      recC.taskSetHash = 'aaaaaaaaaaaaaaaa';
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) recC.tasks.push({ id: `c-${dim}-${n}`, dimension: dim, result: 'PASS' });
+      }
+      recC.completed = true;
+      recC.limitations = 'tampered task set fixture';
+      fs.writeFileSync(recFileC, JSON.stringify(recC, null, 2));
+      const cmp2 = MEV.compareRecords(dir, initA.runId, initC.runId);
+      check('modeleval:taskset-mismatch-comparison-refused',
+        cmp2.ok === false && cmp2.blocked === true && cmp2.reason.includes('task sets differ'),
+        'not identical tasks -> not comparable (never silently)');
+      // insufficient-sample dimensions are classified, not scored
+      const initD = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-thin', testedAt: '2026-11-07T13:00:00Z' });
+      MEV.addTaskResult(dir, initD.runId, { id: 'thin-1', dimension: 'tool-calling', result: 'PASS', evidence: 'evidence/only.md' });
+      MEV.completeRecord(dir, initD.runId, 'fixture thin record: one task total');
+      const thin = MEV.deriveProfile(dir, initD.runId);
+      check('modeleval:insufficient-sample-classified-not-scored',
+        thin.ok === true
+        && Object.values(thin.profile.dimensions).every((d) => d.classification === 'INSUFFICIENT_SAMPLE')
+        && thin.profile.dimensions['tool-calling'].classification === 'INSUFFICIENT_SAMPLE'
+        && thin.profile.insufficientSampleDimensions.length === 8,
+        'thin evidence stays INSUFFICIENT, never a score');
+      // CLI contract
+      const esPath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'model-eval.mjs');
+      const runCliNow = (...args) => spawnSync(process.execPath, [esPath, ...args], { encoding: 'utf8', input: '' });
+      const tset = runCliNow('taskset', dir);
+      const usageOut = runCliNow('help');
+      check('modeleval:cli-contract',
+        tset.status === 0 && JSON.parse(tset.stdout).taskSetHash === ts.hash
+        && usageOut.status === 0
+        && ['init', 'result', 'complete', 'profile', 'compare', 'NO ranking is derivable', 'operator-gated']
+          .some((s) => usageOut.stdout.includes(s)),
+        `taskset hash pinned in CLI=${JSON.parse(tset.stdout).taskSetHash === ts.hash}`);
+      // environment is recorded and compared
+      check('modeleval:environment-recorded',
+        initA.ok && recA.environment.nodeVersion === process.version
+        && recA.environment.os === `${process.platform}`,
+        `os=${recA.environment.os}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a
@@ -561,4 +1405,4 @@ function main() {
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main();
+await main();

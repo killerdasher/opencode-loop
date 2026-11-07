@@ -95,8 +95,12 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_COMMAND="$REPO_ROOT/.opencode/commands/loop.md"
 SRC_SKILL_DIR="$REPO_ROOT/.opencode/skills/loop-engine"
+# Continuity helper (ADR 0002): deterministic state validation/persistence.
+# Installed outside the skill directory (see backup-root rationale below:
+# OpenCode discovers extensions under <config>/commands and <config>/skills).
+SRC_HELPER="$REPO_ROOT/scripts/continuity.mjs"
 
-if [ ! -f "$SRC_COMMAND" ] || [ ! -f "$SRC_SKILL_DIR/SKILL.md" ]; then
+if [ ! -f "$SRC_COMMAND" ] || [ ! -f "$SRC_SKILL_DIR/SKILL.md" ] || [ ! -f "$SRC_HELPER" ]; then
   fail "Repository is incomplete; missing source files under $REPO_ROOT/.opencode"
   note "Run this script from a complete opencode-loop checkout."
   exit 1
@@ -129,6 +133,7 @@ BACKUP_ROOT="$(dirname "$DEST_ROOT")/$(basename "$DEST_ROOT")-loop-backups"
 
 DEST_COMMAND="$DEST_ROOT/commands/loop.md"
 DEST_SKILL_DIR="$DEST_ROOT/skills/loop-engine"
+DEST_HELPER="$DEST_ROOT/scripts/continuity.mjs"
 
 note "Scope: $SCOPE"
 note "Destination: $DEST_ROOT"
@@ -176,7 +181,7 @@ backup_and_remove() {
 # --- Uninstall ---------------------------------------------------------------
 if [ "$UNINSTALL" -eq 1 ]; then
   removed=0
-  for target in "$DEST_COMMAND" "$DEST_SKILL_DIR"; do
+  for target in "$DEST_COMMAND" "$DEST_SKILL_DIR" "$DEST_HELPER"; do
     if [ ! -e "$target" ]; then
       note "Not installed (skipped): $target"
       continue
@@ -265,6 +270,7 @@ install_skill_dir() {
 
 install_file "$SRC_COMMAND" "$DEST_COMMAND"
 install_skill_dir "$SRC_SKILL_DIR" "$DEST_SKILL_DIR"
+install_file "$SRC_HELPER" "$DEST_HELPER"
 
 if [ "$DRYRUN" -eq 1 ]; then
   note "DRY RUN complete; nothing was changed."

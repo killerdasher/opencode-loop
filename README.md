@@ -124,6 +124,19 @@ Mode behavior:
 
 > **Honesty note:** iteration limits and modes are *prompt-level execution guidance*, not a runtime controller. No code counts your iterations — the workflow's integrity depends on the agent tracking and reporting them truthfully. LOOP says the same thing to the agent inside the skill.
 
+### Continuity commands (durable run state)
+
+Runs leave a machine-checked checkpoint in `.loop/continuity.json` (project-local, git-excluded by instruction). Any new session - any model - can pick a dead run up through the same nine-stage loop:
+
+```
+/loop-status                              # read-only: state, integrity, git cross-check
+/loop-pause <reason>                      # pause at an honest stage boundary
+/loop-resume                              # gated restoration (integrity, identity, reconciliation, your explicit approval)
+/loop-cancel <reason>                     # cancel; the run is archived in .loop/archive/, never deleted
+```
+
+Command-level guidance only: no runtime enforces checkpoints, pauses, or resumes, recovery never launches an interrupted `ACTIVE` run automatically, and there is no `--force` in this release. See [docs/continuity.md](docs/continuity.md) and [ADR 0002](docs/adr/0002-loop-continuity.md).
+
 ## Installation
 
 ### Windows (PowerShell)
@@ -221,7 +234,7 @@ node scripts/validate.mjs --all        # everything
 node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
-Zero dependencies — Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 190 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
+Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 280 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
 
 ### Behavioral evaluation
 
@@ -252,6 +265,7 @@ claimed yet.
 ## Known limitations
 
 - **Prompt-level iteration limits.** Nothing enforces `--max-iterations` at runtime; a misbehaving model could ignore the budget. LOOP mitigates this with explicit iteration banners and honest reporting rules, not hard enforcement.
+- **Continuity is documented, not enforced.** Checkpoint writing, pausing, and resuming are agent-followed procedures with a deterministic validator behind them (`scripts/continuity.mjs`); an interrupted stage may have lost unbounded in-flight work, one live run per project is an operational rule (not a lock), the secret scan is best-effort, and automatic re-drive/limit-detection does not exist. Full boundary: [docs/continuity.md](docs/continuity.md).
 - **Quality depends on the active model and tools.** LOOP structures the work; it cannot add capabilities your model or session lacks. Verification is limited to what the session can actually run (e.g., no cross-platform claims for platforms you didn't test).
 - **No persistent learning.** Each run starts fresh; LOOP does not retain memory between sessions.
 - **No guarantee of perfection.** LOOP aims for evidence-based quality, not the discovery of every possible defect.
@@ -274,16 +288,22 @@ claimed yet.
 opencode-loop/
 ├── .opencode/
 │   ├── commands/loop.md                 # /loop entry point
+│   │   ├── loop-status.md               # continuity: read-only state + git cross-check
+│   │   ├── loop-pause.md                # continuity: pause at a stage boundary
+│   │   ├── loop-resume.md               # continuity: gated restoration
+│   │   └── loop-cancel.md               # continuity: cancel + archive
 │   └── skills/loop-engine/
 │       ├── SKILL.md                     # the workflow engine
 │       └── references/
 │           ├── quality-gates.md         # status vocabulary, gates, report formats
 │           ├── risk-analysis.md         # adversarial review checklists
-│           └── evaluation-cases.md      # in-session behavioral guidance
+│           ├── evaluation-cases.md      # in-session behavioral guidance
+│           └── continuity.md            # durable-run protocol (ADR 0002)
 ├── scripts/
 │   ├── install.ps1                      # Windows installer
 │   ├── install.sh                       # Linux/macOS installer
-│   └── validate.mjs                     # repository validator (3 modes)
+│   ├── validate.mjs                     # repository validator (3 modes)
+│   └── continuity.mjs                   # deterministic continuity helper (optional)
 ├── tests/
 │   ├── evaluation.md                    # behavioral evaluation rubric (Cases A–I)
 │   ├── comparison.md                    # A/B comparison methodology (no results claimed)
@@ -296,8 +316,8 @@ opencode-loop/
 │       ├── safety.mjs                   # unattended-run safety contract (env allowlist, least privilege)
 │       └── selftest.mjs                 # free self-test (no model calls)
 ├── docs/
-│   ├── architecture.md · design-principles.md
-│   └── adr/0001-runtime-orchestration.md  # skill-only vs plugin vs orchestrator
+│   ├── architecture.md · design-principles.md · continuity.md
+│   └── adr/0001-runtime-orchestration.md · adr/0002-loop-continuity.md
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
 ```
@@ -309,6 +329,8 @@ opencode-loop/
 | [docs/architecture.md](docs/architecture.md) | How the command, skill, installers, validator, and evaluation harness fit together — and why |
 | [docs/design-principles.md](docs/design-principles.md) | The ten principles LOOP refuses to violate (evidence, scope, honesty about mechanism) |
 | [docs/adr/0001-runtime-orchestration.md](docs/adr/0001-runtime-orchestration.md) | Why LOOP is prompt-level; what would trigger a plugin/orchestrator layer |
+| [docs/adr/0002-loop-continuity.md](docs/adr/0002-loop-continuity.md) | The LOOP Continuity decision record: durable run state, lifecycle commands, resume gates, and the owner-approved amendments |
+| [docs/continuity.md](docs/continuity.md) | User-facing continuity guide: commands, gates, and the capability boundary (verbatim from ADR 0002) |
 | [tests/evaluation.md](tests/evaluation.md) | The behavioral evaluation rubric: Cases A–I with objective PASS/FAIL/BLOCKED/REVIEW criteria |
 | [tests/comparison.md](tests/comparison.md) | A/B comparison methodology — with the honest *"no results yet"* ledger |
 | [tests/harness/README.md](tests/harness/README.md) | Harness usage, exit codes, costs, and the full isolation model |
