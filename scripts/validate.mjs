@@ -586,6 +586,56 @@ function validateRepo(root) {
       'STAGE 6', 'STAGE 7', 'STAGE 8'].every((s) => skillTextEval.includes(s)),
     skillTextEval !== null ? 'nine-stage methodology intact in SKILL.md' : 'SKILL.md missing');
 
+  // -- Task profiles (P5) ------------------------------------------------------
+  // Five adaptive engineering methodologies (BUILD/DEBUG/REFACTOR/AUDIT/
+  // MIGRATE), resolved from explicit user intent by scripts/profiles.mjs and
+  // documented as modular references. Profiles tune emphasis only; the nine
+  // stages and hard safety rules apply unchanged to every profile, and the
+  // task scope is never overridden.
+  const SAFEGUARD_ANCHOR = '<!-- Universal safeguards apply unchanged -->';
+  const PROFILE_DIMENSIONS = [
+    '## Required inputs',
+    '## Relevant analysis stages',
+    '## Verification methods',
+    '## Risk priorities',
+    '## Completion criteria',
+    '## Forbidden shortcuts',
+    '## Expected evidence',
+  ];
+  for (const name of ['BUILD', 'DEBUG', 'REFACTOR', 'AUDIT', 'MIGRATE']) {
+    const profilePath = path.join(root, `.opencode/skills/loop-engine/references/profiles/${name.toLowerCase()}.md`);
+    const profileText = readIfExists(profilePath);
+    if (profileText === null) {
+      push(`profiles:${name.toLowerCase()}:reference`, false, `${name}.md missing`);
+      continue;
+    }
+    const missingDims = PROFILE_DIMENSIONS.filter((s) => !profileText.includes(s));
+    push(`profiles:${name.toLowerCase()}:reference`,
+      missingDims.length === 0 && profileText.includes(SAFEGUARD_ANCHOR),
+      missingDims.length === 0 && profileText.includes(SAFEGUARD_ANCHOR)
+        ? `all seven profile dimensions + safeguard anchor present`
+        : `missing: ${missingDims.join(' | ') || 'safeguard anchor'}`);
+  }
+  const resolver = readIfExists(path.join(root, 'scripts/profiles.mjs'));
+  push('profiles:resolver', resolver !== null
+    && resolver.includes('GENERIC_LOOP') && resolver.includes('PROFILES'),
+    (resolver !== null && resolver.includes('GENERIC_LOOP'))
+      ? 'deterministic profile resolver present'
+      : 'scripts/profiles.mjs missing or incomplete');
+  push('profiles:loop-flag', readIfExists(path.join(root, '.opencode/commands/loop.md'))?.includes('--profile') === true
+    && ['build', 'debug', 'refactor', 'audit', 'migrate'].every((n) => readIfExists(path.join(root, '.opencode/commands/loop.md'))?.includes(n)),
+    'loop.md documents the --profile flag with all five profiles');
+  push('profiles:skill-dispatch',
+    skillTextEval !== null && skillTextEval.includes('references/profiles')
+    && skillTextEval.includes('never auto-inferred') && skillTextEval.includes('generic loop'),
+    skillTextEval !== null ? 'SKILL.md dispatches profiles from explicit intent' : 'SKILL.md missing');
+  push('profiles:docs-guide', readIfExists(path.join(root, 'docs/profiles.md')) !== null
+    && readIfExists(path.join(root, 'docs/profiles.md')).includes('explicit intent') === true
+    && readIfExists(path.join(root, 'docs/profiles.md')).includes('hard safety rules') === true,
+    'docs/profiles.md documents selection + universal safeguards');
+  push('profiles:changelog', changelogEval !== null && changelogEval.includes('profiles.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents profiles' : 'CHANGELOG missing profiles entry');
+
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
     push('tests:evaluation-cases', false, 'tests/evaluation.md missing');

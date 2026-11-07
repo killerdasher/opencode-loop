@@ -60,6 +60,20 @@ Classify requirements:
 
 Do not invent additional product requirements. Ask the user only when an essential decision genuinely cannot be inferred safely; in every other case choose a reasonable, safe assumption and list it in the Stage 0 summary.
 
+**Task profile (P5 — adaptive methodology).** If the `/loop` arguments
+resolved a `--profile <name>` flag (build | debug | refactor | audit |
+migrate), read `references/profiles/<name>.md` and apply it for the rest of
+the run: it tunes stage emphasis, verification methods, risk priorities,
+completion criteria, forbidden shortcuts, and expected evidence. Profiles
+are selected from explicit user intent and never auto-inferred; the
+operator's task scope passes through verbatim and is never overridden. The
+nine-stage workflow and the hard safety rules apply unchanged to every
+profile - a profile never removes a stage, never weakens a safeguard, and
+never substitutes its completion criteria for the Stage 8 evidence
+requirements (it only adds profile-specific ones). No `--profile` flag (or
+an explicitly corrected unknown profile) means the generic loop - run it
+exactly as this skill otherwise prescribes.
+
 **Continuity checkpoint (ADR 0002).** If a live `.loop/continuity.json`
 checkpoint exists for this project (an ACTIVE, PAUSED, RECOVERY_REQUIRED, or
 BLOCKED run), do not silently start a second run: refuse and point to

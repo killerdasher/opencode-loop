@@ -1036,6 +1036,129 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // 4e. Task profiles (P5) - resolver + modular references on fixtures
+  // ---------------------------------------------------------------------
+  // Profiles tune the nine-stage workflow's emphasis only; they never scope,
+  // never weaken safeguards, and are selected from explicit user intent.
+  const PR = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'profiles.mjs')).href);
+
+  // positive: all five profiles resolve with a reference that exists on disk
+  {
+    const resolved = PR.PROFILES.map((name) => PR.resolveProfile(name.toLowerCase()));
+    check('profiles:all-five-resolve-with-references',
+      resolved.every((x) => x.ok === true && PR.PROFILES.includes(x.profile)
+        && x.reference !== null && fs.existsSync(x.reference) === true
+        && fs.readFileSync(x.reference, 'utf8').length > 200)
+        && resolved.every((x) => PR.PROFILES.includes(x.profile)),
+      `each of ${resolved.length} -> file exists`);
+  }
+
+  // negative: an unknown profile is refused, never silently defaulted
+  {
+    const bad = PR.resolveProfile('REWRITE');
+    const bad2 = PR.resolveProfile('nope-mode');
+    check('profiles:unknown-names-refused',
+      bad.ok === false && bad.valid.length === 5 && bad2.ok === false
+      && bad.reason.includes('unknown task profile'),
+      JSON.stringify(bad.reason));
+  }
+
+  // positive: explicit auto / missing flag -> generic loop, never a guess
+  {
+    const auto = PR.resolveProfile('auto');
+    const none = PR.resolveProfile(undefined);
+    const noneStr = PR.resolveProfile('');
+    check('profiles:auto-and-absent-are-generic',
+      auto.ok && auto.profile === 'GENERIC_LOOP' && auto.reference === null
+      && none.ok && none.profile === 'GENERIC_LOOP' && noneStr.ok
+      && noneStr.profile === 'GENERIC_LOOP',
+      'no profile may be invented by the resolver');
+  }
+
+  // positive: case + separator tolerance
+  {
+    const c1 = PR.resolveProfile('BUILD');
+    const c2 = PR.resolveProfile('debug');
+    const c3 = PR.resolveProfile('refactor');
+    const c4 = PR.resolveProfile('  AUDIT  ');
+    check('profiles:normalization-tolerant',
+      c1.ok && c1.profile === 'BUILD' && c2.profile === 'DEBUG'
+      && c3.profile === 'REFACTOR' && c4.profile === 'AUDIT',
+      'case/space tolerant, resolution deterministic');
+  }
+
+  // scope preservation: --profile flag is stripped; the task text is verbatim
+  {
+    const ws = 'fix the  range\n  off-by-one   bug';
+    const withFlag = `--profile debug   ${ws}`;
+    const s = PR.stripProfileFlag(withFlag);
+    check('profiles:flag-stripped-scope-verbatim',
+      s.ok === true && s.profile === 'debug'
+      && s.taskText === `   ${ws}`, // the separating whitespace belongs to the task and is preserved
+      `task preserved: ${JSON.stringify(s.taskText)}`);
+    const untouched = 'build a parser  --profile=not-a-real-flag';
+    const u = PR.stripProfileFlag(untouched);
+    check('profiles:non-profile-flags-preserved',
+      u.ok === true && u.profile === null && u.taskText === untouched,
+      `other flags untouched: ${JSON.stringify(u.taskText)}`);
+  }
+
+  // negative: --profile without a value refused (never silently defaults)
+  {
+    const noval = PR.stripProfileFlag('do a thing --profile');
+    check('profiles:missing-flag-value-refused',
+      noval.ok === false && noval.valid.length === 5,
+      JSON.stringify(noval.reason));
+  }
+
+  // resolution from a full /loop task line: last-wins + correction, scope held
+  {
+    const task = 'restructure the parser --profile refactor --mode deep';
+    const r1 = PR.resolveFromTask(task);
+    const dual = PR.resolveFromTask('--profile audit fix bug --profile migrate task text');
+    check('profiles:resolve-from-task-last-wins-scope-preserved',
+      r1.ok === true && r1.profile === 'REFACTOR'
+      // verbatim: only the flag trio is removed; whitespace runs stay as given
+      && r1.taskText === 'restructure the parser  --mode deep'
+      && dual.ok === true && dual.profile === 'MIGRATE'
+      && dual.corrections.length === 1
+      && dual.taskText === ' fix bug  task text',
+      `last-wins=${dual.profile}, correction=${dual.corrections[0]}`);
+  }
+
+  // CLI contract: resolve explicit -> 0; unknown -> 4; strip -> 0
+  {
+    const ePath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'profiles.mjs');
+    const run = (...args) => spawnSync(process.execPath, [ePath, ...args], { encoding: 'utf8' });
+    const okRun = run('resolve', 'audit');
+    check('profiles:cli-resolve-explicit',
+      okRun.status === 0 && JSON.parse(okRun.stdout).profile === 'AUDIT',
+      `status=${okRun.status}`);
+    const badRun = run('resolve', 'nonsense');
+    check('profiles:cli-refuses-unknown',
+      badRun.status === 4 && JSON.parse(badRun.stdout).valid.length === 5,
+      `status=${badRun.status}`);
+    const stripRun = run('strip', '--task', 'halve the module --profile refactor');
+    check('profiles:cli-strip',
+      stripRun.status === 0 && JSON.parse(stripRun.stdout).profile === 'refactor'
+      // verbatim: the trailing separator before the removed flag stays
+      && JSON.parse(stripRun.stdout).taskText === 'halve the module ',
+      `status=${stripRun.status}`);
+  }
+
+  // safeguard anchor: every profile explicitly binds the universal safeguards
+  {
+    const files = ['build', 'debug', 'refactor', 'audit', 'migrate'];
+    const refDir = path.resolve(HARNESS_DIR, '..', '..', '.opencode', 'skills', 'loop-engine', 'references');
+    const missing = files.filter((f) => {
+      const t = fs.readFileSync(path.join(refDir, 'profiles', `${f}.md`), 'utf8');
+      return !t.includes('<!-- Universal safeguards apply unchanged -->');
+    });
+    check('profiles:safeguards-anchored-in-every-profile', missing.length === 0,
+      missing.length ? `missing anchor: ${missing.join(', ')}` : 'all five bind the anchors');
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a
