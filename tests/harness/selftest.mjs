@@ -794,6 +794,248 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // 4d. Evaluator - deterministic completion evaluation (P4)
+  // ---------------------------------------------------------------------
+  // The evaluator derives PASS/FAIL/BLOCKED/NEEDS_REVIEW from the evidence
+  // manifest at <project>/.loop/verification.json. Guarantees under test:
+  // missing or advisory-only verification never silently becomes PASS, a
+  // recorded PASS is exposed by --fresh re-execution of the real command,
+  // and a model-written completion claim carries no weight by itself.
+  const EV = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs')).href);
+  const verFile = (d) => path.join(d, '.loop', 'verification.json');
+  const nodeExit = (code) => ({ cmd: [process.execPath, '-e', `process.exit(${code})`] });
+
+  // positive: fully covered MUST criteria with deterministic evidence -> PASS
+  {
+    const d = contProject('eval-positive');
+    const bound = C.opInitialize(d, { objective: 'evaluator positive subject' });
+    fs.writeFileSync(path.join(d, 'deliverable.txt'), 'o');
+    const rec = EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-deliverable', requirement: 'MUST', text: 'deliverable exists', artifact: 'deliverable.txt' },
+        { id: 'must-tests', requirement: 'MUST', text: 'suite green', },
+      ],
+      evidence: [{ id: 'ev-tests', verdict: 'PASS', criterionIds: ['must-deliverable', 'must-tests'], exec: nodeExit(0) }],
+      blockers: [{ id: 'bl-none', text: 'no open blocker', resolved: true }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:positive-deterministic-pass',
+      rec.ok === true && outcome.outcome === 'PASS' && outcome.reasons.length === 0,
+      `outcome=${outcome.outcome}`);
+    check('evaluator:continuity-binding-adoption',
+      rec.manifest.taskId === bound.state.taskId,
+      `bound=${rec.manifest.taskId}`);
+    const fresh = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:positive-fresh-reexecutes',
+      fresh.outcome === 'PASS' && fresh.reRun.length === 1 && fresh.reRun[0].reExecuted === true
+      && fresh.reRun[0].verdict === 'PASS',
+      `reRun verdict=${fresh.reRun[0]?.verdict}`);
+  }
+
+  // negative: a FAIL evidence verdict is decisive
+  {
+    const d = contProject('eval-fail');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-fail', requirement: 'MUST', text: 'suite green' }],
+      evidence: [{ id: 'ev-fail', verdict: 'FAIL', criterionIds: ['must-fail'], note: 'regression in range parser' }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-evidence-fail-is-FAIL',
+      outcome.outcome === 'FAIL' && outcome.reasons.some((r) => r.code === 'evidence-fail'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: MUST with missing verification -> BLOCKED (never PASS)
+  {
+    const d = contProject('eval-missing');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-uncovered', requirement: 'MUST', text: 'unverified criterion' }],
+      evidence: [{ id: 'ev-other', verdict: 'PASS', criterionIds: [] }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-missing-must-BLOCKED',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'must-missing-verification'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: MUST covered only by advisory evidence caps at NEEDS_REVIEW
+  {
+    const d = contProject('eval-advisory');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-advisory', requirement: 'MUST', text: 'model-reviewed claim' }],
+      evidence: [{ id: 'ev-advisory', verdict: 'PASS', criterionIds: ['must-advisory'], note: 'reviewed by the agent' }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-advisory-only-MUST-NEEDS_REVIEW',
+      outcome.outcome === 'NEEDS_REVIEW'
+      && outcome.reasons.some((r) => r.code === 'must-advisory-only'),
+      `outcome=${outcome.outcome} (never PASS from prose)`);
+  }
+
+  // negative: absent deliverable artifact + unresolved blocker + open HIGH
+  {
+    const d = contProject('eval-blocked');
+    EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-crit', requirement: 'MUST', text: 'suite green' },
+        { id: 'must-artifact', requirement: 'MUST', text: 'doc exists', artifact: 'docs/gap.md' },
+      ],
+      evidence: [{ id: 'ev-1', verdict: 'PASS', criterionIds: ['must-crit'], exec: nodeExit(0) },
+        { id: 'ev-2', verdict: 'BLOCKED', criterionIds: ['must-artifact'] }],
+      blockers: [{ id: 'bl-1', text: 'awaiting owner decision on flags', resolved: false }],
+      findings: [{ id: 'fn-1', severity: 'HIGH', text: 'unreviewed injection path', resolved: false }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-blockers-and-gaps-BLOCKED',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'must-missing-verification' && r.detail.includes('must-artifact'))
+      && outcome.reasons.some((r) => r.code === 'unresolved-blocker')
+      && outcome.reasons.some((r) => r.code === 'open-severity-finding' && r.detail.includes('HIGH')),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: SHOULD uncovered caps at NEEDS_REVIEW; resolving everything recovers PASS
+  {
+    const d = contProject('eval-recover');
+    EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-core', requirement: 'MUST', text: 'suite green' },
+        { id: 'should-docs', requirement: 'SHOULD', text: 'guides updated' },
+      ],
+      evidence: [{ id: 'ev-core', verdict: 'PASS', criterionIds: ['must-core'], exec: nodeExit(0) }],
+    });
+    const capped = EV.deriveOutcome(d);
+    check('evaluator:negative-should-uncovered-NEEDS_REVIEW',
+      capped.outcome === 'NEEDS_REVIEW' && capped.reasons.some((r) => r.code === 'should-uncovered'),
+      `outcome=${capped.outcome}`);
+    EV.recordManifest(d, {
+      evidence: [{ id: 'ev-docs', verdict: 'PASS', criterionIds: ['should-docs'], exec: nodeExit(0) }],
+    });
+    const recovered = EV.deriveOutcome(d);
+    check('evaluator:positive-recovers-to-PASS',
+      recovered.outcome === 'PASS',
+      `outcome=${recovered.outcome}`);
+  }
+
+  // adversarial: a recorded PASS with a command that actually fails is exposed
+  // by --fresh - the tamper-verdict path mirrors an unverified self-report
+  {
+    const d = contProject('eval-tamper');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-tamper', requirement: 'MUST', text: 'suite green' }],
+      evidence: [{ id: 'ev-tamper', verdict: 'PASS', criterionIds: ['must-tamper'], exec: nodeExit(7) }],
+    });
+    const blind = EV.deriveOutcome(d);
+    const exposed = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:adversarial-tampered-verdict-exposed',
+      blind.outcome === 'PASS' && exposed.outcome === 'FAIL'
+      && exposed.reRun[0].exit === 7 && exposed.reRun[0].verdict === 'FAIL',
+      `blind=${blind.outcome}, fresh=${exposed.outcome}, exit=${exposed.reRun[0].exit}`);
+  }
+
+  // adversarial: cross-run binding - a foreign manifest must not author this run
+  {
+    const d = contProject('eval-cross-task');
+    C.opInitialize(d, { objective: 'live run owns this project' });
+    const foreign = {
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: 'ffffffffffffffff',
+      criteria: [{ id: 'must-x', requirement: 'MUST', text: 'foreign criteria' }],
+      evidence: [{ id: 'ev-x', verdict: 'PASS', criterionIds: ['must-x'], exec: nodeExit(0) }],
+      findings: [],
+      blockers: [],
+    };
+    fs.mkdirSync(path.join(d, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(d), JSON.stringify(foreign, null, 2));
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:adversarial-cross-task-refused',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'cross-run-evidence'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // adversarial: a manifest planted beside ANOTHER project's state copy - the
+  // task id matches, but the state's recorded project root does not - refused
+  {
+    const dA = contProject('eval-foreign-a');
+    C.opInitialize(dA, { objective: 'state root A' });
+    const stateA = JSON.parse(fs.readFileSync(liveFile(dA), 'utf8'));
+    const dB = contProject('eval-foreign-b');
+    fs.cpSync(path.join(dA, '.loop'), path.join(dB, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dB), JSON.stringify({
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: stateA.taskId, // equal ids - only identity catches this
+      criteria: [{ id: 'must-fake', requirement: 'MUST', text: 'planted criteria' }],
+      evidence: [{ id: 'ev-fake', verdict: 'PASS', criterionIds: ['must-fake'], exec: nodeExit(0) }],
+      findings: [],
+      blockers: [],
+    }, null, 2));
+    const outcome = EV.deriveOutcome(dB);
+    check('evaluator:adversarial-foreign-identity-refused',
+      outcome.outcome === 'BLOCKED'
+      && outcome.reasons.some((r) => r.code === 'project-identity-not-reconciled'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // adversarial: zero criteria and corrupt manifests never derive PASS
+  {
+    const dEmpty = contProject('eval-empty');
+    fs.mkdirSync(path.join(dEmpty, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dEmpty), JSON.stringify({
+      schemaVersion: EV.EVAL_SCHEMA_VERSION,
+      tool: EV.EVAL_TOOL_ID,
+      taskId: null,
+      criteria: [],
+      evidence: [{ id: 'ev-empty', verdict: 'PASS', criterionIds: [] }],
+      findings: [],
+      blockers: [],
+    }, null, 2));
+    const noCriteria = EV.deriveOutcome(dEmpty);
+    check('evaluator:adversarial-no-criteria-never-PASS',
+      noCriteria.outcome === 'BLOCKED' && noCriteria.reasons.some((r) => r.code === 'no-criteria-declared'),
+      `outcome=${noCriteria.outcome}`);
+    const dCorrupt = contProject('eval-corrupt');
+    fs.mkdirSync(path.join(dCorrupt, '.loop'), { recursive: true });
+    fs.writeFileSync(verFile(dCorrupt), '{"schemaVersion":1,"tool":"loop-ev');
+    const before = fs.readFileSync(verFile(dCorrupt), 'utf8');
+    const corruptOut = EV.deriveOutcome(dCorrupt);
+    const refused = EV.recordManifest(dCorrupt, { criteria: [{ id: 'a', requirement: 'MUST', text: 'x' }] });
+    const after = fs.readFileSync(verFile(dCorrupt), 'utf8');
+    check('evaluator:adversarial-corrupt-manifest-preserved-BLOCKED',
+      corruptOut.outcome === 'BLOCKED'
+      && refused.ok === false && refused.blocked === true
+      && before === after,
+      `outcome=${corruptOut.outcome}, bytes preserved=${before === after}`);
+  }
+
+  // CLI contract: secret recording is refused exit 2 (fail-closed, assembled at runtime)
+  {
+    const d = contProject('eval-secret');
+    const run = (...argv) => spawnSync(process.execPath,
+      [path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs'), ...argv],
+      { encoding: 'utf8', input: '' });
+    const patch = JSON.stringify({
+      criteria: [{ id: 'must-leak', requirement: 'MUST', text: 'deploy with ' + 'ghp_' + '0123456789abcdef'.repeat(2) + 'ab3d' }],
+    });
+    const secretRun = spawnSync(process.execPath,
+      [path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evaluator.mjs'), 'record', d, '--from-stdin'],
+      { encoding: 'utf8', input: patch });
+    const absent = !fs.existsSync(verFile(d));
+    const help = run('help');
+    check('evaluator:cli-secret-record-refused',
+      secretRun.status === 2 && absent && JSON.parse(secretRun.stdout).blocked === true,
+      `status=${secretRun.status}`);
+    check('evaluator:cli-help-lists-contract',
+      help.status === 0
+      && ['record', 'outcome', '--fresh', 'PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW']
+        .every((s) => help.stdout.includes(s)),
+      'usage lists subcommands + outcome vocabulary');
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a

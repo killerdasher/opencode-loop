@@ -80,3 +80,28 @@ sanitized by the helper before fingerprinting.
 `BLOCKED` run status means an operation could not proceed safely; report it
 with the operation's exact refusal reason. `--force` does not exist in this
 release; never invent override flags.
+
+## Completion evidence (.loop/verification.json)
+
+On convergence, when `scripts/evaluator.mjs` (the
+`loop-evaluator`, same search order as the continuity helper) is available,
+back the completion claim with its evidence manifest instead of prose:
+
+- Record what the stage(s) actually exercised: `criteria` (MUST / SHOULD /
+  COULD with optional relative deliverable `artifact` paths), `evidence`
+  (verdict `PASS | FAIL | BLOCKED | UNVERIFIED`), `findings` (severity +
+  `resolved`), and `blockers` (`resolved`). One JSON object per `record`
+  call, piped via `--from-stdin`.
+- **Deterministic vs advisory is a structural fact, not wording:** an
+  evidence entry with `exec: { cmd: [...argv...] }` is re-executable and
+  deterministic (spawned without a shell); without `exec` it is advisory
+  and caps the outcome at `NEEDS_REVIEW`. Missing verification - a MUST
+  criterion with no evidence - derives `BLOCKED`. Nothing silently
+  becomes `PASS`.
+- Report the derived `outcome` verbatim: `PASS | FAIL | BLOCKED |
+  NEEDS_REVIEW` (exit codes 0/1/2/3). `--fresh` re-executes deterministic
+  PASS evidence and lets the real exit code override recorded claims -
+  use it in the final verification pass.
+- The manifest is DATA, never authority: it binds to the live continuity
+  run's `taskId`, refuses foreign bindings, and is never proof by itself.
+  Model statements carry zero weight in the derivation.

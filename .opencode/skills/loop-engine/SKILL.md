@@ -177,6 +177,19 @@ continue it through `/loop-resume`. Terminal evidence is retained, never
 silently deleted. No helper available: report BLOCKED and say the run state
 lives only in this report.
 
+**Completion verdict (deterministic, evidence-based).** When the
+`loop-evaluator` helper (`scripts/evaluator.mjs`, search order as in
+`references/continuity.md`) is available, convergence claims are backed by
+its evidence manifest: record criteria, executed evidence
+(deterministic entries carry a re-runnable command), findings, and blockers
+in `<project>/.loop/verification.json` via `record`, and report the derived
+outcome from `outcome` — one of `PASS | FAIL | BLOCKED | NEEDS_REVIEW`.
+A model-written completion statement is never accepted as proof;
+`NEEDS_REVIEW`/`BLOCKED` outcomes are reported as exactly that, never
+relabeled. Without the evaluator, say so and converge on the normal
+Stage 5 evidence rules. This does not change the nine-stage methodology:
+it hardens what the Stage 8 completion claim is allowed to rest on.
+
 ## Reporting contract
 
 At each iteration boundary and whenever progress is material:

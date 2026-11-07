@@ -542,6 +542,50 @@ function validateRepo(root) {
       ? 'README documents the continuity commands and doc'
       : 'README missing continuity command/doc references');
 
+  // -- Completion evaluator (P4) ---------------------------------------------
+  // A deterministic evidence-based evaluator lives at scripts/evaluator.mjs;
+  // it derives pass/fail-style completion outcomes from a structured evidence
+  // manifest at .loop/verification.json and must never accept a model-written
+  // completion statement as proof.
+  const evaluatorPath = path.join(root, 'scripts/evaluator.mjs');
+  const evaluator = readIfExists(evaluatorPath);
+  if (evaluator === null) {
+    push('evaluator:implementation', false, 'scripts/evaluator.mjs missing');
+    push('evaluator:outcome-vocabulary', false, 'scripts/evaluator.mjs missing');
+    push('evaluator:exit-codes', false, 'scripts/evaluator.mjs missing');
+  } else {
+    push('evaluator:implementation', true, 'scripts/evaluator.mjs present');
+    const outcomeVocab = ['PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW', 'no-criteria-declared', 'must-advisory-only'];
+    const missingVocab = outcomeVocab.filter((s) => !evaluator.includes(s));
+    push('evaluator:outcome-vocabulary', missingVocab.length === 0,
+      missingVocab.length === 0 ? 'four-outcome vocabulary + fail-closed reason codes present' : `missing outcome vocabulary: ${missingVocab.join(', ')}`);
+    const exitContract = '0=PASS 1=FAIL 2=BLOCKED 3=NEEDS_REVIEW';
+    push('evaluator:exit-codes', evaluator.includes(exitContract),
+      evaluator.includes(exitContract) ? 'exit-code contract documented in usage' : 'usage missing exit-code contract');
+  }
+  const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
+  push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
+    skillTextEval !== null && skillTextEval.includes('evaluator.mjs')
+      ? 'SKILL.md wires the evaluator into convergence reporting (stopping-condition evidence)'
+      : 'SKILL.md missing evaluator touchpoint');
+  const refContinuity = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/continuity.md'));
+  push('evaluator:reference-section', refContinuity !== null && refContinuity.includes('verification.json'),
+    refContinuity !== null && refContinuity.includes('verification.json')
+      ? 'continuity reference documents the evidence manifest'
+      : 'references/continuity.md missing evidence-manifest section');
+  const evalDocs = readIfExists(path.join(root, 'docs/evaluator.md'));
+  push('evaluator:docs-guide', evalDocs !== null && evalDocs.includes('.loop/verification.json') && evalDocs.includes('NEEDS_REVIEW'),
+    evalDocs !== null ? 'docs/evaluator.md documents schema, outcomes, exit codes' : 'docs/evaluator.md missing');
+  const changelogEval = readIfExists(path.join(root, 'CHANGELOG.md'));
+  push('evaluator:changelog-entry', changelogEval !== null && changelogEval.includes('evaluator.mjs'),
+    changelogEval !== null && changelogEval.includes('evaluator.mjs')
+      ? 'CHANGELOG documents the evaluator'
+      : 'CHANGELOG missing evaluator entry');
+  push('evaluator:nine-stages-intact',
+    skillTextEval !== null && ['STAGE 0', 'STAGE 1', 'STAGE 2', 'STAGE 3', 'STAGE 4', 'STAGE 5',
+      'STAGE 6', 'STAGE 7', 'STAGE 8'].every((s) => skillTextEval.includes(s)),
+    skillTextEval !== null ? 'nine-stage methodology intact in SKILL.md' : 'SKILL.md missing');
+
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
     push('tests:evaluation-cases', false, 'tests/evaluation.md missing');
