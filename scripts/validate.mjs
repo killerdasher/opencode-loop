@@ -636,6 +636,68 @@ function validateRepo(root) {
   push('profiles:changelog', changelogEval !== null && changelogEval.includes('profiles.mjs'),
     changelogEval !== null ? 'CHANGELOG documents profiles' : 'CHANGELOG missing profiles entry');
 
+  // -- Model capability evaluation (P6) ----------------------------------------
+  // Evidence-backed model evaluation on identical tasks + controlled envs:
+  // scripts/model-eval.mjs derives profiles ONLY from completed records
+  // carrying limitations, refuses secret-shaped content and unknown fields,
+  // and has no ranking/winner/aggregate keys by construction. No real model
+  // profiles ship here (token-gated: operator-supplied credentials); the
+  // core tests run offline on fixtures with no paid API.
+  const meFile = readIfExists(path.join(root, 'scripts/model-eval.mjs'));
+  const ME_DIMENSIONS = [
+    'instruction-adherence', 'tool-calling', 'coding-correctness',
+    'context-management', 'verification-accuracy', 'security-reasoning',
+    'recovery-behavior', 'completion-evaluator-adherence',
+  ];
+  push('modeleval:framework', meFile !== null
+    && meFile.includes('ME_SCHEMA_VERSION') && meFile.includes('taskSetHash')
+    && meFile.includes('scanForSecrets'),
+    meFile !== null ? 'model-eval framework present with hash-pinned task set + secret scan'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:dimensions-complete', meFile !== null && ME_DIMENSIONS.every((d) => meFile.includes(d)),
+    meFile !== null && ME_DIMENSIONS.every((d) => meFile.includes(d))
+      ? 'all eight capability dimensions named in the framework'
+      : `missing dimensions: ${ME_DIMENSIONS.filter((d) => meFile === null || !meFile.includes(d)).join(', ')}`);
+  push('modeleval:sample-size-honesty', meFile !== null
+    && meFile.includes('MIN_TASKS_PER_DIMENSION') && meFile.includes('INSUFFICIENT_SAMPLE')
+    && meFile.includes('limitations'),
+    meFile !== null ? 'sub-threshold dimensions classified INSUFFICIENT_SAMPLE; completion requires limitations'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:no-ranking', meFile !== null
+    && meFile.includes('no ranking') && meFile.includes('no aggregate')
+    && meFile.includes('observedDifference') && !/rank(?:ed|ing)?\s*:/.test(meFile),
+    meFile !== null ? 'comparisons emit observed counts only - no ranking derivable'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:no-auto-switch-no-credentials', meFile !== null
+    && meFile.includes('never selects or switches providers')
+    && meFile.includes('operator-supplied') && meFile.includes('operator-gated'),
+    meFile !== null ? 'runs are operator-gated; no provider switching, no credential handling'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:taskset-pinned', (() => {
+    const t = readIfExists(path.join(root, 'tests/model-eval/taskset.v1.json'));
+    if (t === null) return [false, 'tests/model-eval/taskset.v1.json missing'];
+    let j; try { j = JSON.parse(t); } catch { return [false, 'task set is not valid JSON']; }
+    const ok = j.taskSetVersion === 'v1.0.0' && Array.isArray(j.tasks) && j.tasks.length === 8
+      && ME_DIMENSIONS.every((d) => j.tasks.some((x) => x.dimension === d));
+    return [ok, ok ? 'task set pinned v1.0.0, 8 tasks, all dimensions covered'
+      : 'task set incomplete or unpinned'];
+  })());
+  push('modeleval:docs-guide',
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('Honest scope') === true
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('INSUFFICIENT_SAMPLE') === true
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('operator-supplied credentials') === true,
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+      ? 'docs/model-eval.md documents dimensions, CLI + sample-size honesty'
+      : 'docs/model-eval.md missing');
+  push('modeleval:changelog', changelogEval !== null && changelogEval.includes('model-eval.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents model-eval' : 'CHANGELOG missing model-eval entry');
+  push('modeleval:honest-real-profile-disclosure',
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('zero real')
+    && /paid API/i.test(readIfExists(path.join(root, 'docs/model-eval.md'))),
+    'zero real model profiles disclosed; core tests stay offline/free');
+
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
     push('tests:evaluation-cases', false, 'tests/evaluation.md missing');

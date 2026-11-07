@@ -1159,6 +1159,155 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // 4f. Model capability evaluation (P6) - framework on fixture records
+  // ---------------------------------------------------------------------
+  // No model credentials exist in this session (token-gated by the standing
+  // Case J park): the framework is exercised offline on FIXTURE records -
+  // which is exactly the core-project-test path the P6 owner brief requires
+  // to stay free of any paid API. A capability profile from a real model
+  // requires operator-initiated evaluation runs; none exist in this repo.
+  {
+    // known from 4d/4e imports: EV, PR; add the model-eval module
+  const MEV = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'model-eval.mjs')).href);
+  const dir = contProject('model-eval');
+    fs.mkdirSync(dir, { recursive: true });
+    // pinned task set: full dimension coverage + stable hash
+    const ts = MEV.loadTaskSet();
+    check('modeleval:taskset-covers-all-eight-dimensions',
+      ts.ok === true && JSON.stringify(ts.tasks.map((t) => t.dimension).sort()) === JSON.stringify([...MEV.DIMENSIONS].sort())
+      && /^[0-9a-f]{16}$/.test(ts.hash) && ts.hash === MEV.loadTaskSet().hash,
+      `hash=${ts.hash}, tasks=${ts.tasks.length}`);
+    // record init: fields pinned + deterministic runId + no overwrite
+    const initA = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-large', testedAt: '2026-11-07T10:00:00Z' });
+    const initA2 = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-large', testedAt: '2026-11-07T10:00:00Z' });
+    const recA = JSON.parse(fs.readFileSync(path.join(dir, `model-eval-${initA.runId}.json`), 'utf8'));
+    check('modeleval:record-fields-pinned-deterministic',
+      initA.ok && initA2.ok === false && recA.runId === initA.runId
+      && JSON.stringify(Object.keys(recA).sort()) === JSON.stringify([
+        'completed', 'environment', 'modelId', 'provider', 'runId',
+        'schemaVersion', 'taskSetHash', 'taskSetVersion', 'tasks', 'testedAt', 'tool',
+      ]),
+      `init refused duplicate=${!initA2.ok}`);
+    // inadequate samples cannot derive; completeness gate; limitations required
+    {
+      const prof = MEV.deriveProfile(dir, initA.runId);
+      check('modeleval:uncompleted-record-derives-nothing',
+        prof.ok === false && prof.blocked === true,
+        `reason=${JSON.stringify(prof.reason).slice(0, 70)}`);
+    }
+    // negative: unknown field rejected (marketing prose is not evidence)
+    {
+      const bad = { ...recA, marketing: 'agentic wizard model' };
+      const v = MEV.validateRecord(bad);
+      fs.writeFileSync(path.join(dir, `model-eval-${initA.runId}.json`), JSON.stringify(recA, null, 2)); // keep clean
+      check('modeleval:unknown-field-refused',
+        v.ok === false && v.errors.some((e) => e.includes('marketing')),
+        'provider/model names are data; claims about capability are not');
+    }
+    // negative: secret-shaped content in the record refused
+    {
+      const sec = MEV.addTaskResult(dir, initA.runId, {
+        id: 'sec-task', dimension: 'security-reasoning', result: 'PASS',
+        notes: 'copy of key ' + 'ghp_' + '0123456789abcdef'.repeat(2) + 'zp9w',
+      });
+      check('modeleval:secret-refused-fail-closed',
+        sec.ok === false && sec.blocked === true,
+        (sec.reason || '').slice(0, 40));
+    }
+    // positive path: 24 adequate tasks -> completed -> derived profile
+    {
+      const dims = MEV.DIMENSIONS;
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) {
+          MEV.addTaskResult(dir, initA.runId, {
+            id: `${dim}-${n}`, dimension: dim,
+            result: n % 2 === 0 ? 'PASS' : 'PARTIAL',
+            evidence: `evidence/${dim}-${n}.md`,
+          });
+        }
+      }
+      const noLimit = MEV.completeRecord(dir, initA.runId, undefined);
+      const withLimit = MEV.completeRecord(dir, initA.runId, 'fixture record: n=3 per dimension (threshold); single environment; one session');
+      check('modeleval:completion-requires-limitations',
+        noLimit.ok === false && withLimit.ok === true,
+        `limitations gate=${!noLimit.ok}`);
+      const prof = MEV.deriveProfile(dir, initA.runId);
+      const dimsDerived = Object.keys(prof.profile.dimensions);
+      check('modeleval:profile-from-completed-record',
+        prof.ok === true
+        && dimsDerived.length === 8
+        && dims.every((d) => dimsDerived.includes(d))
+        && prof.profile.sampleSize === 24
+        && prof.profile.evidenceBacked === 24
+        && Object.values(prof.profile.dimensions).every((d) => d.classification === 'EVIDENCED'),
+        `n=${prof.profile.sampleSize}, evidenceBacked=${prof.profile.evidenceBacked}`);
+      // completed records are immutable - derived profiles stay stable
+      const postComplete = MEV.addTaskResult(dir, initA.runId, { id: 'late-task', dimension: 'tool-calling', result: 'FAIL' });
+      check('modeleval:completed-record-immutable',
+        postComplete.ok === false && postComplete.blocked === true,
+        'no mutation after completion; profiles were derived from what was recorded');
+      // comparison: same taskset -> observed counts, no ranking keys anywhere
+      const initB = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-small', testedAt: '2026-11-07T11:00:00Z' });
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) {
+          MEV.addTaskResult(dir, initB.runId, { id: `b-${dim}-${n}`, dimension: dim, result: 'FAIL' });
+        }
+      }
+      MEV.completeRecord(dir, initB.runId, 'fixture record B');
+      const cmp = MEV.compareRecords(dir, initA.runId, initB.runId);
+      const cmpText = JSON.stringify(cmp.comparison ?? {});
+      check('modeleval:compare-no-ranking-no-winner',
+        cmp.ok === true
+        && !/"rank"/.test(cmpText) && !/"winner"/.test(cmpText) && !/"overall"/.test(cmpText)
+        && cmp.comparison.dimensions.every((d) => d.a.pass + d.a.partial + d.a.fail === d.b.pass + d.b.partial + d.b.fail)
+        && cmp.comparison.note.includes('no ranking'),
+        'observed counts with an explicit non-ranking disclaimer');
+      // mismatched task set: refused, never silently compared
+      const initC = MEV.initRecord(dir, { provider: 'other-corp', modelId: 'other-model', testedAt: '2026-11-07T12:00:00Z' });
+      const recFileC = path.join(dir, `model-eval-${initC.runId}.json`);
+      const recC = JSON.parse(fs.readFileSync(recFileC, 'utf8'));
+      recC.taskSetHash = 'aaaaaaaaaaaaaaaa';
+      for (const dim of dims) {
+        for (let n = 0; n < 3; n++) recC.tasks.push({ id: `c-${dim}-${n}`, dimension: dim, result: 'PASS' });
+      }
+      recC.completed = true;
+      recC.limitations = 'tampered task set fixture';
+      fs.writeFileSync(recFileC, JSON.stringify(recC, null, 2));
+      const cmp2 = MEV.compareRecords(dir, initA.runId, initC.runId);
+      check('modeleval:taskset-mismatch-comparison-refused',
+        cmp2.ok === false && cmp2.blocked === true && cmp2.reason.includes('task sets differ'),
+        'not identical tasks -> not comparable (never silently)');
+      // insufficient-sample dimensions are classified, not scored
+      const initD = MEV.initRecord(dir, { provider: 'fixture-corp', modelId: 'fixture-thin', testedAt: '2026-11-07T13:00:00Z' });
+      MEV.addTaskResult(dir, initD.runId, { id: 'thin-1', dimension: 'tool-calling', result: 'PASS', evidence: 'evidence/only.md' });
+      MEV.completeRecord(dir, initD.runId, 'fixture thin record: one task total');
+      const thin = MEV.deriveProfile(dir, initD.runId);
+      check('modeleval:insufficient-sample-classified-not-scored',
+        thin.ok === true
+        && Object.values(thin.profile.dimensions).every((d) => d.classification === 'INSUFFICIENT_SAMPLE')
+        && thin.profile.dimensions['tool-calling'].classification === 'INSUFFICIENT_SAMPLE'
+        && thin.profile.insufficientSampleDimensions.length === 8,
+        'thin evidence stays INSUFFICIENT, never a score');
+      // CLI contract
+      const esPath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'model-eval.mjs');
+      const runCliNow = (...args) => spawnSync(process.execPath, [esPath, ...args], { encoding: 'utf8', input: '' });
+      const tset = runCliNow('taskset', dir);
+      const usageOut = runCliNow('help');
+      check('modeleval:cli-contract',
+        tset.status === 0 && JSON.parse(tset.stdout).taskSetHash === ts.hash
+        && usageOut.status === 0
+        && ['init', 'result', 'complete', 'profile', 'compare', 'NO ranking is derivable', 'operator-gated']
+          .some((s) => usageOut.stdout.includes(s)),
+        `taskset hash pinned in CLI=${JSON.parse(tset.stdout).taskSetHash === ts.hash}`);
+      // environment is recorded and compared
+      check('modeleval:environment-recorded',
+        initA.ok && recA.environment.nodeVersion === process.version
+        && recA.environment.os === `${process.platform}`,
+        `os=${recA.environment.os}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a
