@@ -1308,6 +1308,161 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // 4g. Controlled self-evolution (P7) - the gate itself, hermetically
+  // ---------------------------------------------------------------------
+  // The evolution framework is exercised end-to-end on tiny fixture repos
+  // with hermetic suite scripts (no reliance on the live .loop archives,
+  // which are untracked): real git worktrees, real spawnSync runs, one
+  // commit pair per case. Cost: seconds; fully offline.
+  {
+    // known from 4d-4f imports: EV, PR, MEV; add the evolution module
+    const EVX = await import(pathToFileURL(path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evolution.mjs')).href);
+    const evoDir = contProject('evolution');
+    fs.mkdirSync(evoDir, { recursive: true });
+    const mkArchive = (name, obj) => {
+      fs.mkdirSync(path.join(evoDir, 'fixtures'), { recursive: true });
+      fs.writeFileSync(path.join(evoDir, 'fixtures', name), JSON.stringify(obj, null, 2));
+    };
+    const arch = (taskId, status, extra = {}) => ({
+      schemaVersion: 1, tool: 'loop-continuity', taskId, createdAt: '2026-11-07T00:00:00Z',
+      updatedAt: '2026-11-07T00:00:00Z', generation: 1, project: { root: 'X', name: 'LOOP' },
+      status, integrity: 'VALID', stage: 7, iteration: 1, maxIterations: 5, mode: 'balanced',
+      objective: 'fixture objective: fix the validator suite drift',
+      stopReason: extra.stopReason ?? null, stopCondition: null,
+      stoppingCondition: extra.stoppingCondition ?? null, iterations: [], recovery: null,
+      createdBy: { sessionId: null, model: null },
+      ...extra,
+    });
+    mkArchive('a.json', arch('t1', 'BLOCKED', { stopReason: 'validate suite red on stage 5' }));
+    mkArchive('b.json', arch('t2', 'PAUSED', { stoppingCondition: 'incomplete: test check for resume gate missing' }));
+    fs.writeFileSync(path.join(evoDir, 'fixtures', 'c-integrity.json'), JSON.stringify({ ...arch('t3', 'BLOCKED'), integrity: 'SUSPECTED_STALE' }));
+    // step 1: collect sanitized outcomes; suspect integrity refused
+    {
+      const r1 = EVX.collectOutcome(evoDir, { sourceKind: 'continuity-archive', sourceFile: 'a.json', absFile: path.join(evoDir, 'fixtures', 'a.json'), collectedAt: '2026-11-07T01:00:00Z' });
+      const r2 = EVX.collectOutcome(evoDir, { sourceKind: 'continuity-archive', sourceFile: 'b.json', absFile: path.join(evoDir, 'fixtures', 'b.json'), collectedAt: '2026-11-07T01:00:00Z' });
+      const rBad = EVX.collectOutcome(evoDir, { sourceKind: 'continuity-archive', sourceFile: 'c-integrity.json', absFile: path.join(evoDir, 'fixtures', 'c-integrity.json'), collectedAt: '2026-11-07T01:00:00Z' });
+      const rDup = EVX.collectOutcome(evoDir, { sourceKind: 'continuity-archive', sourceFile: 'a.json', absFile: path.join(evoDir, 'fixtures', 'a.json'), collectedAt: '2026-11-07T02:00:00Z' });
+      check('evolution:collect-sanitized-append-only',
+        r1.ok === true && r2.ok === true && rBad.ok === false && rDup.alreadyRecorded === true
+        && fs.existsSync(path.join(evoDir, `ledger-${r1.entryId}.json`)),
+        `integrity-suspect refused=${!rBad.ok}; re-collect skipped, never rewritten`);
+    }
+    // steps 2-3: classification + recurring pattern
+    {
+      const p = EVX.derivePatterns(evoDir);
+      const val = p.recurring.find((r) => r.weaknessClass === 'validation');
+      check('evolution:patterns-classify-recurring',
+        p.ok === true && p.entriesAnalyzed === 2 && val !== undefined && val.recurring === true,
+        `analyzed=${p.entriesAnalyzed}, validation hits=${val?.hits}`);
+    }
+    // steps 4-5: proposal mapped to recorded cases; unmapped refused
+    {
+      const entries = EVX.readLedger(evoDir).entries;
+      const bad = EVX.createProposal(evoDir, { weaknessClass: 'validation', mappedEntryIds: ['nope000000000000'], changeTitle: 'x', changeSummary: 'y', acceptanceMetric: 'z' });
+      const good = EVX.createProposal(evoDir, {
+        weaknessClass: 'validation', mappedEntryIds: [entries[0].entryId],
+        changeTitle: 'fixture: pin the stage-5 suite gate',
+        changeSummary: 'add a structural check pinning a suite gate the drift escaped',
+        acceptanceMetric: 'candidate suites all exit 0 with a strictly higher tier pass count',
+        claim: 'this definitely improves things',
+        createdAt: '2026-11-07T03:00:00Z',
+      });
+      const rec = JSON.parse(fs.readFileSync(path.join(evoDir, `proposal-${good.proposalId}.json`), 'utf8'));
+      check('evolution:proposal-maps-to-recorded-cases',
+        bad.ok === false && good.ok === true && rec.status === 'open'
+        && rec.claim !== undefined && rec.claim.evidence === false,
+        'unmapped refused; claim carried but labeled evidence:false');
+      // skill-dir guard: the active skill is read-only to this tool
+      const guarded = EVX.createProposal(path.join(evoDir, '.opencode', 'untouchable'), {
+        weaknessClass: 'validation', mappedEntryIds: [entries[0].entryId], changeTitle: 'x', changeSummary: 'y', acceptanceMetric: 'z',
+      });
+      check('evolution:skill-dir-refused',
+        guarded.ok === false && guarded.reason.includes('active skill'),
+        'writing under the active skill dir is refused outright');
+    }
+    // steps 6-10 on a tiny real git repo: NEUTRAL / IMPROVED / REJECTED
+    {
+      const repo = path.join(evoDir, 'probe-repo');
+      fs.mkdirSync(repo, { recursive: true });
+      const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+      const suiteFile = (n) => fs.writeFileSync(path.join(repo, 'suite.mjs'), `console.log('Summary: ${n} passed, 0 failed');process.exit(0);`);
+      suiteFile(5);
+      g('init', '-q'); g('config', 'user.email', 'selftest@localhost'); g('config', 'user.name', 'selftest');
+      g('add', '-A'); g('commit', '-qm', 'base');
+      const baseSha = g('rev-parse', 'HEAD').stdout.trim();
+      suiteFile(6);
+      g('add', '-A'); g('commit', '-qm', 'candidate: one more check green');
+      const candSha = g('rev-parse', 'HEAD').stdout.trim();
+      const entries = EVX.readLedger(evoDir).entries;
+      const propN = EVX.createProposal(evoDir, { weaknessClass: 'recovery', mappedEntryIds: [entries[1].entryId], changeTitle: 'neutral case', changeSummary: 'no change', acceptanceMetric: 'equal counts', createdAt: '2026-11-07T04:00:00Z' }).proposalId;
+      const propI = EVX.createProposal(evoDir, { weaknessClass: 'validation', mappedEntryIds: [entries[0].entryId], changeTitle: 'improving case', changeSummary: 'adds one check', acceptanceMetric: 'strictly more passes', createdAt: '2026-11-07T04:01:00Z' }).proposalId;
+      const spec = [{ name: 'gate', command: 'node suite.mjs', expectedSummaries: 1 }];
+      const vN = EVX.verifyCandidate(evoDir, repo, { proposalId: propN, baseRef: baseSha, candidateRef: baseSha, suiteSpec: spec, createdAt: '2026-11-07T05:00:00Z' });
+      check('evolution:isolated-worktree-neutral',
+        vN.ok === true && vN.verdict === 'NEUTRAL' && vN.worktreesLeft.length === 0,
+        `stable==candidate -> NEUTRAL; worktrees cleaned=${vN.worktreesLeft.length === 0}`);
+      const vI = EVX.verifyCandidate(evoDir, repo, { proposalId: propI, baseRef: baseSha, candidateRef: candSha, suiteSpec: spec, createdAt: '2026-11-07T05:01:00Z' });
+      check('evolution:improvement-required-measurable',
+        vI.ok === true && vI.verdict === 'IMPROVED' && vI.worktreesLeft.length === 0,
+        `5 -> 6 passed => IMPROVED`);
+      // --keep-worktrees is honored: nothing is removed, paths left for inspection
+      const propK = EVX.createProposal(evoDir, { weaknessClass: 'references', mappedEntryIds: [entries[1].entryId], changeTitle: 'kept worktrees case', changeSummary: 'no change', acceptanceMetric: 'equal counts', createdAt: '2026-11-07T04:03:00Z' }).proposalId;
+      const vK = EVX.verifyCandidate(evoDir, repo, { proposalId: propK, baseRef: baseSha, candidateRef: baseSha, suiteSpec: spec, createdAt: '2026-11-07T05:03:00Z', keepWorktrees: true });
+      check('evolution:keep-worktrees-honored',
+        vK.ok === true && vK.verdict === 'NEUTRAL' && vK.worktreesLeft.length === 2,
+        `${vK.worktreesLeft.length} worktree paths left deliberately (operator keep)`);
+      // regressions reject, and rejection is final
+      const propR = EVX.createProposal(evoDir, { weaknessClass: 'instructions', mappedEntryIds: [entries[0].entryId], changeTitle: 'regressing case', changeSummary: 'breaks a check', acceptanceMetric: 'any', createdAt: '2026-11-07T04:02:00Z' }).proposalId;
+      suiteFile(4); g('add', '-A'); g('commit', '-qm', 'candidate: regressed'); const regSha = g('rev-parse', 'HEAD').stdout.trim();
+      const vR = EVX.verifyCandidate(evoDir, repo, { proposalId: propR, baseRef: baseSha, candidateRef: regSha, suiteSpec: spec, createdAt: '2026-11-07T05:02:00Z' });
+      const propRec = JSON.parse(fs.readFileSync(path.join(evoDir, `proposal-${propR}.json`), 'utf8'));
+      const noApprove = EVX.approveProposal(evoDir, { proposalId: propR, approvedBy: 'someone' });
+      check('evolution:regressions-rejected-final',
+        vR.ok === true && vR.verdict === 'REJECTED' && propRec.status === 'rejected'
+        && noApprove.ok === false,
+        `4 -> 5 passed is a REGRESSION -> REJECTED; approval refused forever`);
+      // approval: explicit approver required; verdict must be IMPROVED
+      const a1 = EVX.approveProposal(evoDir, { proposalId: propI, approvedBy: undefined });
+      const a2 = EVX.approveProposal(evoDir, { proposalId: propN, approvedBy: 'operator' });
+      const a3 = EVX.approveProposal(evoDir, { proposalId: propI, approvedBy: 'operator' });
+      const propApp = JSON.parse(fs.readFileSync(path.join(evoDir, `proposal-${propI}.json`), 'utf8'));
+      check('evolution:approval-mandatory-record-only',
+        a1.ok === false && a2.ok === false && a2.reason.includes('measurable improvement')
+        && a3.ok === true && propApp.status === 'approved'
+        && propApp.approval.appliedByTool === false
+        && propApp.approval.note.includes('manual, human-reviewable'),
+        'no approver/NEUTRAL refused; IMPROVED recorded as decision only');
+      // step 10: human-reviewable report with honest limitations
+      const rep = EVX.buildReport(evoDir, { proposalId: propI });
+      check('evolution:report-human-reviewable',
+        rep.ok === true && rep.report.status === 'approved' && rep.report.mappedFailedCases.length >= 1
+        && rep.report.comparison.verdict === 'IMPROVED'
+        && rep.report.limitations.noLearning.includes('does not learn model weights')
+        && rep.report.limitations.claimsNotEvidence.includes('never evidence'),
+        'proposal + mapping + tiers + limitations in one reviewable report');
+      // path-traversal hardening: ids must be 16-hex
+      const trav = EVX.approveProposal(evoDir, { proposalId: '..\\..\\evil', approvedBy: 'x' });
+      const trav2 = EVX.verifyCandidate(evoDir, repo, { proposalId: '../../../evil', baseRef: baseSha, candidateRef: candSha, suiteSpec: spec, createdAt: '2026-11-07T05:04:00Z' });
+      check('evolution:path-traversal-refused',
+        trav.ok === false && trav.reason.includes('invalid-id')
+        && trav2.ok === false && trav2.reason.includes('invalid-id'),
+        'record ids are 16-hex only; separators cannot escape the data dir');
+      // CLI contract
+      const esPath = path.resolve(HARNESS_DIR, '..', '..', 'scripts', 'evolution.mjs');
+      const runCliNow = (...args) => spawnSync(process.execPath, [esPath, ...args], { encoding: 'utf8', input: '' });
+      const h = runCliNow('help');
+      const unknown = runCliNow('no-such-command', evoDir);
+      const usageText = h.stdout;
+      check('evolution:cli-contract',
+        h.status === 0 && unknown.status === 4
+        && ['collect', 'patterns', 'propose', 'verify', 'approve', 'report'].every((c) => usageText.includes(c))
+        && usageText.includes('user approval is mandatory')
+        && usageText.includes('published automatically'),
+        'ten-step CLI documented; unknown command refused');
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // 5. Parser regressions (defects found in the Case A pilot)
   // ---------------------------------------------------------------------
   // 5a. Porcelain first line: git status --porcelain prints " M path" with a

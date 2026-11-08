@@ -698,6 +698,70 @@ function validateRepo(root) {
     && /paid API/i.test(readIfExists(path.join(root, 'docs/model-eval.md'))),
     'zero real model profiles disclosed; core tests stay offline/free');
 
+  // -- Controlled self-evolution (P7) ------------------------------------------
+  // Evidence-driven improvement of LOOP's own artifacts: collect sanitized
+  // outcomes -> classify weaknesses -> proposals mapped to recorded failed
+  // cases -> isolated candidate worktrees -> full regression suite on both
+  // sides -> deterministic comparison -> regressions REJECTED -> human-
+  // reviewable report. Never modifies the active skill, never publishes,
+  // never adopts without an explicit approved-by; model claims are never
+  // evidence; LOOP does not learn weights or hold permanent intelligence.
+  const evoFile = readIfExists(path.join(root, 'scripts/evolution.mjs'));
+  push('evolution:framework', evoFile !== null
+    && evoFile.includes('collectOutcome') && evoFile.includes('derivePatterns')
+    && evoFile.includes('verifyCandidate') && evoFile.includes('approveProposal')
+    && evoFile.includes('buildReport') && evoFile.includes("spawnSync('git', ['worktree', 'add', '--detach'"),
+    evoFile !== null ? 'evolution framework present with isolated worktree verification'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:ten-steps', evoFile !== null
+    && ['REJECTED', 'IMPROVED', 'NEUTRAL'].every((v) => evoFile.includes(v))
+    && evoFile.includes('WEAKNESS_CLASSES') && evoFile.includes('mappedEntryIds')
+    && evoFile.includes('acceptanceMetric'),
+    evoFile !== null ? 'verdicts IMPROVED/NEUTRAL/REJECTED + class/targeted cases/acceptance metric present'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:regression-gate', evoFile !== null
+    && evoFile.includes('const verdict = regressions.length > 0 ? \'REJECTED\'')
+    && evoFile.includes("status: 'rejected'")
+    && evoFile.includes('rejected candidates can never be approved'),
+    evoFile !== null ? 'regressions hard-reject; rejected proposals can never be approved'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:claims-are-not-evidence', evoFile !== null
+    && evoFile.includes('model-generated claims are never evidence'),
+    evoFile !== null ? 'comparison verdict rests on deterministic counts only'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:approval-mandatory-record-only', evoFile !== null
+    && evoFile.includes('--approved-by NAME (user approval is mandatory before adopting a candidate)')
+    && evoFile.includes('appliedByTool: false')
+    && evoFile.includes('manual, human-reviewable step'),
+    evoFile !== null ? 'adoption is record-only behind an explicit named approver'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:never-touches-active-skill', evoFile !== null
+    && evoFile.includes('.opencode') && evoFile.includes('read-only to this tool') && !evoFile.includes('git push'),
+    evoFile !== null ? 'skill dir refused as data-dir; no publish automation exists'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:history-preserving', evoFile !== null
+    && evoFile.includes('alreadyRecorded') && evoFile.includes('never rewritten'),
+    evoFile !== null ? 're-collect skips; historical records are never rewritten'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:regression-suite-default', evoFile !== null
+    && evoFile.includes('node scripts/validate.mjs --all') && evoFile.includes('node tests/harness/selftest.mjs'),
+    evoFile !== null ? 'default suites are the repository\'s full gates'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:no-learning-claim', evoFile !== null
+    && evoFile.includes('does not learn model weights') && evoFile.includes('permanent autonomous intelligence'),
+    evoFile !== null ? 'honesty note present: no learning, no permanent intelligence'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:docs-guide', (() => {
+    const d = readIfExists(path.join(root, 'docs/evolution.md'));
+    if (d === null) return [false, 'docs/evolution.md missing'];
+    const ok = d.includes('never modifies the active skill')
+      && d.includes('labeled as a claim, not evidence')
+      && d.includes('appliedByTool');
+    return [ok, ok ? 'docs/evolution.md documents the gate + record-only approval' : 'docs/evolution.md incomplete'];
+  })());
+  push('evolution:changelog', changelogEval !== null && changelogEval.includes('evolution.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents evolution' : 'CHANGELOG missing evolution entry');
+
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
     push('tests:evaluation-cases', false, 'tests/evaluation.md missing');
