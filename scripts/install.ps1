@@ -17,6 +17,18 @@
     - differing files cause an error unless -Overwrite is given
     - with -Overwrite, a timestamped backup is created first
 
+  Destination safety: before writing (or uninstalling) anything, every path
+  component between the operator-provided root and the destination is checked
+  for symlink/junction/reparse-point redirection. A redirected destination is
+  refused with its resolved real target unless -AllowRedirectedDestination is
+  given.
+
+  Ownership-aware uninstall: -Uninstall removes ONLY files and directories
+  that are byte-identical to LOOP's current sources. Paths that differ
+  (user-created or user-modified) are preserved and reported; nothing is
+  removed in that run, and -ForceCustomized opts in to removing them
+  (they are backed up first).
+
 .PARAMETER Scope
   "global" (default) or "project".
 
@@ -28,6 +40,15 @@
 
 .PARAMETER Uninstall
   Remove the installed LOOP files (backing them up first).
+
+.PARAMETER AllowRedirectedDestination
+  Proceed even when a destination path component is a symlink, junction, or
+  other reparse point (the destination would resolve outside the intended
+  tree). The resolved real target is printed in every case.
+
+.PARAMETER ForceCustomized
+  With -Uninstall: also remove paths that differ from LOOP's sources
+  (user-owned or customized); they are backed up first.
 
 .PARAMETER DryRun
   Print what would happen without changing anything.
@@ -48,6 +69,10 @@ param(
     [switch]$Overwrite,
 
     [switch]$Uninstall,
+
+    [switch]$AllowRedirectedDestination,
+
+    [switch]$ForceCustomized,
 
     [switch]$DryRun
 )
@@ -84,13 +109,16 @@ if ($Scope -eq 'project') {
         exit 1
     }
     $destRoot = Join-Path $ProjectDir '.opencode'
+    $operatorRoot = $ProjectDir
 }
 else {
     if ($env:XDG_CONFIG_HOME) {
         $destRoot = Join-Path $env:XDG_CONFIG_HOME 'opencode'
+        $operatorRoot = $env:XDG_CONFIG_HOME
     }
     elseif ($HOME) {
         $destRoot = Join-Path $HOME '.config\opencode'
+        $operatorRoot = $HOME
     }
     else {
         Write-Fail 'Cannot determine the global config directory (HOME and XDG_CONFIG_HOME are both unset).'
@@ -112,6 +140,59 @@ $BackupRoot = Join-Path (Split-Path -Parent $destRoot) ((Split-Path -Leaf $destR
 Write-Note "Scope: $Scope"
 Write-Note "Destination: $destRoot"
 if ($DryRun) { Write-Note 'DRY RUN - no files will be changed.' }
+
+# --- Destination containment preflight (P9) ----------------------------------
+# Every path component between the operator-supplied root and each destination
+# (including the destinations themselves) must be a real directory, not a
+# symlink, junction, or reparse point - otherwise installs, backups, and
+# uninstall removals silently follow the link outside the intended tree
+# (reproduced 2026-11-09: both a junctioned destRoot and a junctioned skills
+# subdirectory received installer writes while the installer reported success
+# at the canonical path). The preflight runs before ANY mutation, for both
+# install and uninstall. -AllowRedirectedDestination opts in explicitly; the
+# resolved real target is printed in every case.
+$TestedContainmentPerLink = @{}
+function Test-DestinationContainment([string]$Anchor, [string]$Target) {
+    if ($Target -eq $Anchor) { return }
+    if (-not ($Target.StartsWith($Anchor + '\') -or $Target.StartsWith($Anchor + '/'))) {
+        # Not anchored (unexpected); fail safe.
+        Write-Fail "Refusing: destination is not under the operator-provided root: $Target"
+        Write-Note "Root: $Anchor"
+        exit 1
+    }
+    $relative = $Target.Substring($Anchor.Length).TrimStart('\', '/')
+    $acc = $Anchor
+    foreach ($comp in ($relative -split '[\\/]+' | Where-Object { $_ })) {
+        $acc = Join-Path $acc $comp
+        if (-not (Test-Path -LiteralPath $acc)) { continue } # created later by this run
+        try {
+            $item = Get-Item -LiteralPath $acc -Force
+        } catch {
+            Write-Fail "Refusing: destination component cannot be inspected: $acc"
+            exit 1
+        }
+        $isLink = $item.LinkType -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        if ($isLink) {
+            $resolved = if ($item.Target) { ($item.Target | Select-Object -First 1) } else { '(target not reported)' }
+            if ($AllowRedirectedDestination) {
+                if (-not $TestedContainmentPerLink.ContainsKey($acc)) {
+                    $TestedContainmentPerLink[$acc] = $true
+                    Write-Note "Redirected destination accepted (-AllowRedirectedDestination): $acc -> $resolved"
+                }
+            }
+            else {
+                Write-Fail "Refusing: destination component is a symlink, junction, or reparse point: $acc"
+                Write-Note "It resolves to: $resolved"
+                Write-Note 'Writing or removing files here would follow the link outside the intended destination.'
+                Write-Note 'Remove the link and re-run, or re-run with -AllowRedirectedDestination to accept the redirection explicitly.'
+                exit 1
+            }
+        }
+    }
+}
+foreach ($t in @($destRoot, $destCommand, $destSkillDir, $destHelper, $BackupRoot)) {
+    Test-DestinationContainment $operatorRoot $t
+}
 
 # --- Helpers -----------------------------------------------------------------
 function Get-FileSignature([string]$Path) {
@@ -167,15 +248,61 @@ function Backup-Then-Remove([string]$Path) {
     return $backup
 }
 
-# --- Uninstall ---------------------------------------------------------------
+# --- Uninstall (ownership-aware, P9) -----------------------------------------
 if ($Uninstall) {
-    $removed = 0
-    foreach ($target in @($destCommand, $destSkillDir, $destHelper)) {
+    # LOOP removes ONLY paths verified as unchanged LOOP-installed artifacts
+    # (byte-identical to the current sources). A path that differs may be
+    # user-created or user-modified; refusing it keeps a customized /loop on
+    # the user's machine. The refusal is atomic: all targets are classified
+    # BEFORE any removal, and a conflict blocks the whole uninstall.
+    $allTargets = @(
+        @{ Target = $destCommand;   Source = $srcCommand;   Kind = 'file' },
+        @{ Target = $destSkillDir;  Source = $srcSkillDir;  Kind = 'directory' },
+        @{ Target = $destHelper;    Source = $srcHelper;    Kind = 'file' }
+    )
+    # Classification pass - BEFORE any mutation: the refusal is atomic, so a
+    # customized/user-owned path blocks the whole uninstall, not only itself.
+    $conflicts = @()
+    foreach ($entry in $allTargets) {
+        $target = $entry.Target
         if (-not (Test-Path -LiteralPath $target)) {
             Write-Note "Not installed (skipped): $target"
             continue
         }
-        Backup-Then-Remove $target | Out-Null
+        $pristine = $false
+        try {
+            if ($entry.Kind -eq 'file') {
+                $srcPresent = Test-Path -LiteralPath $entry.Source -PathType Leaf
+                $pristine = $srcPresent -and ((Get-FileSignature $entry.Source) -eq (Get-FileSignature $target))
+            }
+            else {
+                $srcPresent = Test-Path -LiteralPath $entry.Source -PathType Container
+                $pristine = $srcPresent -and (Test-DirIdentical $entry.Source $target)
+            }
+        } catch {
+            $pristine = $false # inspect failure: treat as differing (fail-closed)
+        }
+        if (-not $pristine) {
+            $conflicts += $target
+        }
+    }
+    if ($conflicts.Count -gt 0 -and -not $ForceCustomized) {
+        Write-Fail "Uninstall refused: $($conflicts.Count) customized/user-owned path(s) differ from LOOP's sources; nothing was removed."
+        foreach ($c in $conflicts) {
+            Write-Note "Preserving differing path: $c"
+            Write-Note "  It is not byte-identical to LOOP's current sources, so it may be"
+            Write-Note "  user-created or user-modified. LOOP does not remove it by default."
+        }
+        Write-Note 'Remove them manually if they are truly user content, or re-run with'
+        Write-Note '-ForceCustomized to back them up and remove them too (backups are'
+        Write-Note "kept in $BackupRoot)."
+        exit 1
+    }
+    # Removal pass - every remaining path is verified-owned (or -ForceCustomized).
+    $removed = 0
+    foreach ($entry in $allTargets) {
+        if (-not (Test-Path -LiteralPath $entry.Target)) { continue }
+        Backup-Then-Remove $entry.Target | Out-Null
         $removed++
     }
     if ($DryRun) {

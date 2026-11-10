@@ -9,8 +9,9 @@
  * WHAT THIS IS
  *   - a zero-external-dependency Node (>=16.7) script + importable module;
  *   - a deterministic outcome DERIVER over an evidence manifest;
- *   - fail-closed: absent, invalid, ambiguous, advisory-only, or
- *     non-deterministically supported verification can never derive <PASS>.
+ *   - fail-closed: absent, invalid, ambiguous, advisory-only,
+ *     non-deterministically supported, or not-actually-re-executed
+ *     verification can never derive <PASS>.
  *
  * WHAT THIS IS NOT
  *   - not a plugin, daemon, server, database, or resident runtime;
@@ -43,12 +44,19 @@
  *                   unresolved blockers; open CRITICAL/HIGH findings; a MUST
  *                   criterion with missing, UNVERIFIED, or BLOCKED
  *                   verification (including an absent deliverable artifact);
- *   NEEDS_REVIEW  - a MUST covered only by advisory evidence; a SHOULD
- *                   criterion uncovered; open MEDIUM/LOW findings;
- *   PASS          - only when nothing above applies: every MUST is covered
- *                   by a deterministically verified PASS (post re-run), all
- *                   deliverable artifacts exist, blockers are resolved, and
- *                   no finding is open except INFORMATIONAL.
+ *   NEEDS_REVIEW  - a MUST covered only by advisory evidence; a MUST covered
+ *                   by exec-backed recorded PASS evidence that was NOT
+ *                   re-executed in this invocation
+ *                   (deterministic-evidence-not-re-executed: a recorded
+ *                   command claim is a claim, not proof - PASS requires
+ *                   --fresh); a SHOULD criterion uncovered; open MEDIUM/LOW
+ *                   findings;
+ *   PASS          - only when invoked with --fresh and nothing above applies:
+ *                   every MUST is covered by a deterministically verified
+ *                   PASS whose exec command was actually re-executed in this
+ *                   invocation with exit 0, all deliverable artifacts exist,
+ *                   blockers are resolved, and no finding is open except
+ *                   INFORMATIONAL.
  *
  * STATE HYGIENE: writes are atomic (writeJsonAtomic - the same
  * implementation as the continuity helper); the whole manifest is
@@ -305,13 +313,14 @@ function reExecute(entry, projectRoot) {
 const COVER = Object.freeze({
   DETERMINISTIC: 'DETERMINISTIC_PASS',
   ADVISORY_ONLY: 'ADVISORY_ONLY',
+  RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED',
   MISSING: 'MISSING',
   FAILED: 'FAILED',
   BLOCKED_VERDICT: 'BLOCKED_VERDICT',
   UNVERIFIED: 'UNVERIFIED',
 });
 
-function coverageStateFull(criterion, byCriterion, verdictOf, projectRoot) {
+function coverageStateFull(criterion, byCriterion, verdictOf, projectRoot, executed) {
   const linked = byCriterion.get(criterion.id) ?? [];
   const artifactOk = criterion.artifact === undefined
     || fs.existsSync(path.join(projectRoot, criterion.artifact));
@@ -321,15 +330,25 @@ function coverageStateFull(criterion, byCriterion, verdictOf, projectRoot) {
   if (states.includes('FAIL')) return COVER.FAILED;
   if (states.includes('BLOCKED')) return COVER.BLOCKED_VERDICT;
   if (!states.some((s) => s === 'PASS')) return COVER.UNVERIFIED;
-  const deterministic = linked.some((e) => e.exec && verdictOf.get(e.id).verdict === 'PASS');
-  return deterministic ? COVER.DETERMINISTIC : COVER.ADVISORY_ONLY;
+  // exec-backed PASS coverage counts as fully deterministic only when the
+  // command was ACTUALLY re-executed with exit 0 in this same invocation
+  // (executed is populated by the --fresh re-run loop). Without fresh
+  // re-execution a recorded command is a recorded claim, not proof.
+  const execPass = linked.filter((e) => e.exec && verdictOf.get(e.id).verdict === 'PASS');
+  if (execPass.length === 0) return COVER.ADVISORY_ONLY;
+  return execPass.some((e) => executed.has(e.id)) ? COVER.DETERMINISTIC : COVER.RECORDED_ONLY;
 }
 
 /**
  * Derive the completion outcome. Deterministic; never mutates the tree.
  * {fresh: true} re-executes exec.cmd for every deterministically recorded
  * PASS evidence entry and lets the real exit code override the recorded
- * verdict. Missing verification derives BLOCKED/NEEDS_REVIEW - never PASS.
+ * verdict. Only a --fresh invocation can derive PASS: every deterministic
+ * MUST PASS command must have been re-executed with exit 0 in this same
+ * invocation. In default mode exec-backed recorded PASS evidence caps the
+ * outcome at NEEDS_REVIEW (deterministic-evidence-not-re-executed) -
+ * a recorded command claim is a claim, not proof. Missing verification
+ * derives BLOCKED/NEEDS_REVIEW - never PASS.
  */
 export function deriveOutcome(projectRoot, { fresh = false } = {}) {
   const root = path.isAbsolute(projectRoot)
@@ -379,13 +398,17 @@ export function deriveOutcome(projectRoot, { fresh = false } = {}) {
     reasons.push({ code: 'no-criteria-declared', detail: 'an empty evaluation cannot pass' });
     return finish('BLOCKED', reasons, [], [], manifest);
   }
-  // fresh re-execution: the real exit code is authoritative for PASS entries
+  // fresh re-execution: the real exit code is authoritative for PASS entries.
+  // `executed` records which exec-backed PASS entries were actually re-executed
+  // with exit 0 in THIS invocation; without these, PASS can never be derived.
   const reRun = [];
+  const executed = new Set(); // evidence ids verified by fresh re-execution (exit 0)
   const verdictOf = new Map();
   for (const e of manifest.evidence ?? []) {
     let effective = { verdict: e.verdict, reExecuted: false };
     if (fresh && e.exec && e.verdict === 'PASS') {
       const reran = reExecute(e, root);
+      if (reran.verdict === 'PASS') executed.add(e.id);
       if (reran.verdict !== 'PASS') effective = { ...effective, verdict: reran.verdict, reExecuted: true };
       reRun.push({ id: e.id, ...reran, reExecuted: true });
     }
@@ -404,7 +427,7 @@ export function deriveOutcome(projectRoot, { fresh = false } = {}) {
     {
       requirement: c.requirement,
       artifact: c.artifact ?? null,
-      state: coverageStateFull(c, byCriterion, verdictOf, root),
+      state: coverageStateFull(c, byCriterion, verdictOf, root, executed),
     },
   ]);
   // ...derive reasons, fail-closed precedence
@@ -434,6 +457,11 @@ export function deriveOutcome(projectRoot, { fresh = false } = {}) {
         reasons.push({ code: 'must-missing-verification', detail: `${cid}: ${c.state}` });
       } else if (c.state === COVER.ADVISORY_ONLY) {
         reasons.push({ code: 'must-advisory-only', detail: cid });
+      } else if (c.state === COVER.RECORDED_ONLY) {
+        reasons.push({
+          code: 'deterministic-evidence-not-re-executed',
+          detail: `${cid}: exec-backed PASS evidence exists but was not re-executed in this invocation - PASS requires --fresh`,
+        });
       }
     } else if (c.requirement === 'SHOULD' && c.state === COVER.MISSING) {
       reasons.push({ code: 'should-uncovered', detail: cid });
@@ -484,7 +512,11 @@ function usage() {
     '  record <r> --from-stdin        merge criteria/evidence/findings/blockers',
     '                                 (a JSON object with those array keys)',
     '  outcome <r> [--fresh]          derive the completion outcome; --fresh',
-    '                                 re-executes deterministic PASS evidence',
+    '                                 re-executes deterministic PASS evidence.',
+    '                                 PASS is only derivable with --fresh: a',
+    '                                 recorded command claim that was not',
+    '                                 re-executed caps the outcome at',
+    '                                 NEEDS_REVIEW',
     '  help                           this text',
     '',
     'Manifest: ' + VERIFICATION_REL,

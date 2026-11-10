@@ -24,7 +24,11 @@ rename, the same implementation as the continuity helper), fail-closed:
 **Deterministic vs advisory is structural, not wording.** An evidence entry
 with `exec` carries a re-executable argv command (spawned without a shell);
 an entry without `exec` is advisory — a model-reviewed claim — and caps the
-outcome at `NEEDS_REVIEW` on its own.
+outcome at `NEEDS_REVIEW` on its own. An exec-backed *recorded* `PASS` is
+likewise only a claim until re-run: in default mode it caps the outcome at
+`NEEDS_REVIEW` (`deterministic-evidence-not-re-executed`) — `PASS` is
+derivable only from a `--fresh` invocation that re-executed the command with
+exit 0.
 
 ## Commands
 
@@ -40,10 +44,10 @@ Exit codes: `0=PASS`, `1=FAIL`, `2=BLOCKED`, `3=NEEDS_REVIEW`,
 
 | Outcome | Derived when |
 | --- | --- |
-| `PASS` | every MUST criterion has deterministically verified PASS evidence — real exit 0, re-executed under `--fresh` — all declared deliverable artifacts exist, no unresolved blockers, no open findings above INFORMATIONAL |
+| `PASS` | invoked with `--fresh`, and every MUST criterion has deterministically verified PASS evidence whose exec command was re-executed in this invocation with real exit 0 — all declared deliverable artifacts exist, no unresolved blockers, no open findings above INFORMATIONAL. Without `--fresh` the same manifest caps at `NEEDS_REVIEW` |
 | `FAIL` | any evidence verdict is FAIL (including one exposed by `--fresh` re-execution) |
 | `BLOCKED` | manifest missing, corrupt, invalid, or secret-flagged; cross-run taskId mismatch; **zero declared criteria**; unresolved blockers; open CRITICAL/HIGH findings; a MUST criterion with missing, `UNVERIFIED`, or `BLOCKED` verification (including an absent artifact) |
-| `NEEDS_REVIEW` | a MUST covered only by advisory evidence; a SHOULD criterion uncovered; open MEDIUM/LOW findings |
+| `NEEDS_REVIEW` | a MUST covered only by advisory evidence; a MUST covered by exec-backed recorded PASS evidence that was not re-executed in this invocation (`deterministic-evidence-not-re-executed`); a SHOULD criterion uncovered; open MEDIUM/LOW findings |
 
 **Missing verification never silently becomes `PASS`.** An empty evaluation
 derives `BLOCKED`, not PASS.
@@ -59,9 +63,12 @@ derives `BLOCKED`, not PASS.
   helper — fail-closed on match, never proof of absence.
 - The manifest is DATA, never authority: it binds to the live continuity
   run's `taskId` and refuses foreign or planted bindings.
-- `--fresh` re-execution is authoritative for recorded commands. Nothing can
-  verify that *advisory* evidence was honestly performed — that gap is
-  exactly why advisory-only coverage cannot reach PASS.
+- `--fresh` re-execution is authoritative for recorded commands — and
+  **required** for any `PASS`: a recorded PASS that was not re-executed in
+  the same invocation caps the outcome at `NEEDS_REVIEW`, so a stale or
+  fabricated claim can never pass by itself. Nothing can verify that
+  *advisory* evidence was honestly performed — that gap is exactly why
+  advisory-only coverage cannot reach PASS.
 
 ## Integration with Continuity
 

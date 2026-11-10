@@ -406,6 +406,12 @@ function validateRepo(root) {
       ['skill artifact', /loop-engine/],
       ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /'project'/],
+      // P9 finding 2: redirected-destination containment preflight
+      ['redirect containment preflight', /Test-DestinationContainment/],
+      ['redirect opt-in flag', /AllowRedirectedDestination/],
+      ['reparse point detection', /ReparsePoint/],
+      // P9 finding 3: ownership-aware uninstall
+      ['ownership flag', /ForceCustomized/],
     ];
     const missing = markers.filter(([, re]) => !re.test(ps1)).map(([label]) => label);
     push('installer:ps1:content', missing.length === 0, missing.length === 0 ? 'all behavior markers present' : `missing: ${missing.join(', ')}`);
@@ -427,6 +433,12 @@ function validateRepo(root) {
       ['skill artifact', /loop-engine/],
       ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /--project/],
+      // P9 finding 2: redirected-destination containment preflight
+      ['redirect containment preflight', /check_containment/],
+      ['redirect opt-in flag', /allow-redirected-destination/],
+      ['symlink detection', /\[ -L /],
+      // P9 finding 3: ownership-aware uninstall
+      ['ownership flag', /force-customized/],
     ];
     const missing = markers.filter(([, re]) => !re.test(sh)).map(([label]) => label);
     push('installer:sh:content', missing.length === 0, missing.length === 0 ? 'all behavior markers present' : `missing: ${missing.join(', ')}`);
@@ -555,13 +567,24 @@ function validateRepo(root) {
     push('evaluator:exit-codes', false, 'scripts/evaluator.mjs missing');
   } else {
     push('evaluator:implementation', true, 'scripts/evaluator.mjs present');
-    const outcomeVocab = ['PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW', 'no-criteria-declared', 'must-advisory-only'];
+    const outcomeVocab = ['PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW', 'no-criteria-declared', 'must-advisory-only',
+      'deterministic-evidence-not-re-executed'];
     const missingVocab = outcomeVocab.filter((s) => !evaluator.includes(s));
     push('evaluator:outcome-vocabulary', missingVocab.length === 0,
       missingVocab.length === 0 ? 'four-outcome vocabulary + fail-closed reason codes present' : `missing outcome vocabulary: ${missingVocab.join(', ')}`);
     const exitContract = '0=PASS 1=FAIL 2=BLOCKED 3=NEEDS_REVIEW';
     push('evaluator:exit-codes', evaluator.includes(exitContract),
       evaluator.includes(exitContract) ? 'exit-code contract documented in usage' : 'usage missing exit-code contract');
+    // P9 finding 1: a recorded PASS is never proof - default derivation must
+    // carry the not-re-executed reason code and its PASS path must demand
+    // fresh re-execution.
+    push('evaluator:fresh-gate',
+      evaluator.includes('deterministic-evidence-not-re-executed')
+      && evaluator.includes("RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED'")
+      && evaluator.includes('executed.has(e.id)'),
+      evaluator.includes('deterministic-evidence-not-re-executed')
+        ? 'recorded-only evidence capped at NEEDS_REVIEW; PASS derivation demands real re-execution'
+        : 'missing deterministic-evidence-not-re-executed gate');
   }
   const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
   push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
@@ -576,6 +599,13 @@ function validateRepo(root) {
   const evalDocs = readIfExists(path.join(root, 'docs/evaluator.md'));
   push('evaluator:docs-guide', evalDocs !== null && evalDocs.includes('.loop/verification.json') && evalDocs.includes('NEEDS_REVIEW'),
     evalDocs !== null ? 'docs/evaluator.md documents schema, outcomes, exit codes' : 'docs/evaluator.md missing');
+  // P9 finding 1 doc contract: the PASS row must match the code - PASS is
+  // only derivable from a --fresh invocation.
+  push('evaluator:docs-fresh-pass-row',
+    evalDocs !== null && evalDocs.includes('deterministic-evidence-not-re-executed') && /only derivable|derivable only/.test(evalDocs),
+    evalDocs !== null && evalDocs.includes('deterministic-evidence-not-re-executed')
+      ? 'docs/evaluator.md wording matches the fresh-required PASS contract'
+      : 'docs/evaluator.md missing the not-re-executed NEEDS_REVIEW cap wording');
   const changelogEval = readIfExists(path.join(root, 'CHANGELOG.md'));
   push('evaluator:changelog-entry', changelogEval !== null && changelogEval.includes('evaluator.mjs'),
     changelogEval !== null && changelogEval.includes('evaluator.mjs')
@@ -988,6 +1018,55 @@ function runSelfTest(root) {
       expect: 'installer:ps1:content',
       file: 'scripts/install.ps1',
       apply: (t) => t.replace(/-Overwrite/g, '-Replace'),
+    },
+    // -- P9 remediation mutations ----------------------------------------------
+    {
+      id: 'evaluator loses the fresh-evidence gate',
+      expect: 'evaluator:fresh-gate',
+      file: 'scripts/evaluator.mjs',
+      // Remove every trace of the finding-1 gate: the reason code, the
+      // recorded-only coverage state, and the executed-set requirement.
+      apply: (t) => t
+        .split("RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED',\n").join('')
+        .split('deterministic-evidence-not-re-executed').join('evidence-not-reverified')
+        .split('executed.has(e.id)').join('bool'),
+    },
+    {
+      id: 'PowerShell installer drops the redirect preflight',
+      expect: 'installer:ps1:content',
+      file: 'scripts/install.ps1',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('Test-DestinationContainment')
+          && !l.includes('-AllowRedirectedDestination')
+          && !l.includes('ReparsePoint'))
+        .join('\n'),
+    },
+    {
+      id: 'bash installer drops the redirect preflight',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('check_containment')
+          && !l.includes('allow-redirected-destination')
+          && !l.includes('[ -L '))
+        .join('\n'),
+    },
+    {
+      id: 'PowerShell uninstaller loses the ownership gate',
+      expect: 'installer:ps1:content',
+      file: 'scripts/install.ps1',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('ForceCustomized'))
+        .join('\n'),
+    },
+    {
+      id: 'bash uninstaller loses the ownership gate',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('--force-customized')
+          && !l.includes('FORCE_CUSTOMIZED'))
+        .join('\n'),
     },
     // -- Continuity (ADR 0002) mutations --------------------------------------
     {
@@ -1449,6 +1528,96 @@ function runInstallTests(root) {
         const leftovers = fs.readdirSync(scanDir).filter((f) => /backup/i.test(f));
         assert(leftovers.length === 0, `backup left inside discovery dir after uninstall: ${leftovers.join(' | ')}`);
       }
+    });
+
+    // -- P9 finding 2: redirected destinations are refused --------------------
+    scenario('redirected-destination-refused', () => {
+      // A link (junction on Windows, symlink elsewhere) at the destRoot entry
+      // must be refused BEFORE anything is written, and the real target must
+      // be named. Zero writes at either path.
+      const red = path.join(baseTmp, `red-${kind}`);
+      const realDir = path.join(red, 'real-opencode');
+      const xdgDir = path.join(red, 'xdg');
+      const junkRoot = path.join(red, 'junk-target');
+      fs.mkdirSync(xdgDir, { recursive: true });
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.mkdirSync(junkRoot, { recursive: true });
+      fs.symlinkSync(junkRoot, path.join(xdgDir, 'opencode'), isWindows ? 'junction' : 'dir');
+      const r = makeRunner(xdgDir)([]);
+      assert(r.status !== 0, `expected refusal, got exit 0: ${r.out}`);
+      assert(/reparse|junction|symlink/i.test(r.out), `refusal must name the redirect: ${r.out}`);
+      assert(!fs.existsSync(path.join(realDir, 'commands', 'loop.md')), 'fallback path received writes despite refusal');
+      assert(fs.readdirSync(junkRoot).length === 0, 'junction/symlink target received writes despite refusal');
+    });
+
+    scenario('redirected-destination-optin', () => {
+      const red = path.join(baseTmp, `opt-${kind}`);
+      const realDir = path.join(red, 'real-opencode');
+      const xdgDir = path.join(red, 'xdg');
+      const junkRoot = path.join(red, 'junk-target');
+      fs.mkdirSync(xdgDir, { recursive: true });
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.mkdirSync(junkRoot, { recursive: true });
+      fs.symlinkSync(junkRoot, path.join(xdgDir, 'opencode'), isWindows ? 'junction' : 'dir');
+      const args = kind === 'ps1'
+        ? ['-AllowRedirectedDestination']
+        : ['--allow-redirected-destination'];
+      const r = makeRunner(xdgDir)(args);
+      assert(r.status === 0, `opt-in install failed: ${r.out}`);
+      assert(fs.existsSync(path.join(junkRoot, 'skills', 'loop-engine', 'SKILL.md')), 'opt-in install did not land at the resolved target');
+      assert(fs.existsSync(path.join(junkRoot, 'commands', 'loop.md')), 'opt-in install missing command at the resolved target');
+    });
+
+    // -- P9 finding 3: ownership-aware uninstall ------------------------------
+    scenario('uninstall-preserves-customized', () => {
+      // A destination where only the user's own command file exists (LOOP was
+      // never installed): the file differs from the sources, so uninstall must
+      // refuse atomically, exit non-zero, keep the user file, and create no
+      // backups.
+      const own = path.join(baseTmp, `own-${kind}`);
+      const ownXdg = path.join(own, 'opencode');
+      fs.mkdirSync(path.join(ownXdg, 'commands'), { recursive: true });
+      fs.writeFileSync(path.join(ownXdg, 'commands', 'loop.md'), '--- description: the users OWN loop command ---');
+      const args = kind === 'ps1' ? ['-Uninstall'] : ['--uninstall'];
+      const r = makeRunner(own)(args);
+      assert(r.status !== 0, `expected refusal for user-owned file, got exit 0: ${r.out}`);
+      assert(/customized|user-owned|differ/i.test(r.out), `refusal must explain the conflict: ${r.out}`);
+      assert(fs.readFileSync(path.join(ownXdg, 'commands', 'loop.md'), 'utf8').includes('users OWN'), 'user-owned file was modified');
+      assert(!fs.existsSync(path.join(own, 'opencode-loop-backups')), 'no backups may be created by a refused uninstall');
+    });
+
+    scenario('uninstall-modified-refused-force-removes', () => {
+      // LOOP-installed then user-modified command: plain uninstall refuses
+      // atomically (ALL targets kept); with the ownership opt-in, everything
+      // is removed and the modified content is kept in a backup.
+      const mod = path.join(baseTmp, `mod-${kind}`);
+      const made = makeRunner(mod)([]);
+      assert(made.status === 0, `fresh install failed: ${made.out}`);
+      const modCommand = makeRunner(mod)([]);
+      assert(modCommand.status === 0, `second install step failed: ${modCommand.out}`);
+      fs.appendFileSync(path.join(mod, 'opencode', 'commands', 'loop.md'), 'user tweak line\n');
+      const refused = makeRunner(mod)(kind === 'ps1' ? ['-Uninstall'] : ['--uninstall']);
+      assert(refused.status !== 0, `expected refusal for modified file, got exit 0: ${refused.out}`);
+      assert(fs.existsSync(path.join(mod, 'opencode', 'commands', 'loop.md')), 'modified file removed without the opt-in');
+      assert(fs.existsSync(path.join(mod, 'opencode', 'skills', 'loop-engine', 'SKILL.md')), 'atomic refusal broken: skill removed alongside a conflict');
+      assert(fs.existsSync(path.join(mod, 'opencode', 'scripts', 'continuity.mjs')), 'atomic refusal broken: helper removed alongside a conflict');
+      const forced = makeRunner(mod)(kind === 'ps1'
+        ? ['-Uninstall', '-ForceCustomized']
+        : ['--uninstall', '--force-customized']);
+      assert(forced.status === 0, `forced uninstall failed: ${forced.out}`);
+      assert(!fs.existsSync(path.join(mod, 'opencode', 'commands', 'loop.md')), 'forced uninstall did not remove the modified file');
+      let foundTweak = false;
+      const backupsRoot = path.join(mod, 'opencode-loop-backups');
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (path.basename(p) === 'loop.md'
+            && fs.readFileSync(p, 'utf8').includes('user tweak line')) { foundTweak = true; return; }
+        }
+      };
+      walk(backupsRoot);
+      assert(foundTweak, 'modified content not preserved in the forced-uninstall backup');
     });
   };
 

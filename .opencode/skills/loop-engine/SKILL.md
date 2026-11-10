@@ -197,7 +197,9 @@ lives only in this report.
 its evidence manifest: record criteria, executed evidence
 (deterministic entries carry a re-runnable command), findings, and blockers
 in `<project>/.loop/verification.json` via `record`, and report the derived
-outcome from `outcome` — one of `PASS | FAIL | BLOCKED | NEEDS_REVIEW`.
+outcome from `outcome` — one of `PASS | FAIL | BLOCKED | NEEDS_REVIEW`,
+with `--fresh` re-execution required before any `PASS` (a recorded claim
+that was not re-executed caps at `NEEDS_REVIEW`).
 A model-written completion statement is never accepted as proof;
 `NEEDS_REVIEW`/`BLOCKED` outcomes are reported as exactly that, never
 relabeled. Without the evaluator, say so and converge on the normal

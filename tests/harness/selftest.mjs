@@ -819,8 +819,12 @@ async function main() {
       blockers: [{ id: 'bl-none', text: 'no open blocker', resolved: true }],
     });
     const outcome = EV.deriveOutcome(d);
-    check('evaluator:positive-deterministic-pass',
-      rec.ok === true && outcome.outcome === 'PASS' && outcome.reasons.length === 0,
+    // Finding-1 contract (P9): a recorded PASS is a claim, not proof - default
+    // derivation caps exec-backed evidence at NEEDS_REVIEW; only a --fresh
+    // invocation that re-executed every command with exit 0 can derive PASS.
+    check('evaluator:positive-pass-requires-fresh',
+      rec.ok === true && outcome.outcome === 'NEEDS_REVIEW'
+      && outcome.reasons.some((r) => r.code === 'deterministic-evidence-not-re-executed'),
       `outcome=${outcome.outcome}`);
     check('evaluator:continuity-binding-adoption',
       rec.manifest.taskId === bound.state.taskId,
@@ -828,7 +832,7 @@ async function main() {
     const fresh = EV.deriveOutcome(d, { fresh: true });
     check('evaluator:positive-fresh-reexecutes',
       fresh.outcome === 'PASS' && fresh.reRun.length === 1 && fresh.reRun[0].reExecuted === true
-      && fresh.reRun[0].verdict === 'PASS',
+      && fresh.reRun[0].verdict === 'PASS' && fresh.reRun[0].exit === 0,
       `reRun verdict=${fresh.reRun[0]?.verdict}`);
   }
 
@@ -856,6 +860,21 @@ async function main() {
     check('evaluator:negative-missing-must-BLOCKED',
       outcome.outcome === 'BLOCKED'
       && outcome.reasons.some((r) => r.code === 'must-missing-verification'),
+      `outcome=${outcome.outcome}`);
+  }
+
+  // negative: MUST with no exec and no recorded command execution
+  // (only advisory prose) caps at NEEDS_REVIEW - missing execution evidence
+  {
+    const d = contProject('eval-missing-exec');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-noexec', requirement: 'MUST', text: 'criterion with only prose evidence' }],
+      evidence: [{ id: 'ev-prose', verdict: 'PASS', criterionIds: ['must-noexec'], note: 'trust me' }],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:negative-missing-exec-evidence-NEEDS_REVIEW',
+      outcome.outcome === 'NEEDS_REVIEW'
+      && outcome.reasons.some((r) => r.code === 'must-advisory-only'),
       `outcome=${outcome.outcome}`);
   }
 
@@ -912,7 +931,8 @@ async function main() {
     EV.recordManifest(d, {
       evidence: [{ id: 'ev-docs', verdict: 'PASS', criterionIds: ['should-docs'], exec: nodeExit(0) }],
     });
-    const recovered = EV.deriveOutcome(d);
+    // recovery to PASS now requires fresh re-execution (finding-1 contract)
+    const recovered = EV.deriveOutcome(d, { fresh: true });
     check('evaluator:positive-recovers-to-PASS',
       recovered.outcome === 'PASS',
       `outcome=${recovered.outcome}`);
@@ -928,10 +948,34 @@ async function main() {
     });
     const blind = EV.deriveOutcome(d);
     const exposed = EV.deriveOutcome(d, { fresh: true });
+    // P9: the blind (default) outcome is no longer a false PASS - a recorded
+    // claim caps at NEEDS_REVIEW, and --fresh exposes the actual exit code.
     check('evaluator:adversarial-tampered-verdict-exposed',
-      blind.outcome === 'PASS' && exposed.outcome === 'FAIL'
+      blind.outcome === 'NEEDS_REVIEW'
+      && blind.reasons.some((r) => r.code === 'deterministic-evidence-not-re-executed')
+      && exposed.outcome === 'FAIL'
       && exposed.reRun[0].exit === 7 && exposed.reRun[0].verdict === 'FAIL',
       `blind=${blind.outcome}, fresh=${exposed.outcome}, exit=${exposed.reRun[0].exit}`);
+  }
+
+  // adversarial: fresh re-execution that cannot even start (missing
+  // executable) is BLOCKED verification - it must not pass through silently
+  {
+    const d = contProject('eval-spawn-fail');
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-spawn', requirement: 'MUST', text: 'suite green' }],
+      evidence: [{ id: 'ev-spawn', verdict: 'PASS', criterionIds: ['must-spawn'], exec: { cmd: ['not-a-real-executable-xyz', '--version'] } }],
+    });
+    const fresh = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:fresh-unstartable-exec-BLOCKED',
+      fresh.outcome === 'BLOCKED'
+      && fresh.reRun.length === 1 && fresh.reRun[0].verdict === 'BLOCKED',
+      `outcome=${fresh.outcome}, reRun=${JSON.stringify(fresh.reRun)}`);
+    // and with only unstartable evidence the default run cannot PASS either
+    const blind = EV.deriveOutcome(d);
+    check('evaluator:default-unstartable-exec-NEEDS_REVIEW',
+      blind.outcome === 'NEEDS_REVIEW',
+      `outcome=${blind.outcome} (blind run never trusts the recorded PASS)`);
   }
 
   // adversarial: cross-run binding - a foreign manifest must not author this run

@@ -14,12 +14,28 @@
 #   - differing files cause an error unless --overwrite is given
 #   - with --overwrite, a timestamped backup is created first
 #
+# Destination safety: before writing (or uninstalling) anything, every path
+# component between the operator-provided root and the destination is checked
+# for symlink/junction/reparse-point redirection. A redirected destination is
+# refused with its resolved real target unless
+# --allow-redirected-destination is given.
+#
+# Ownership-aware uninstall: --uninstall removes ONLY files and directories
+# that are byte-identical to LOOP's current sources. Paths that differ
+# (user-created or user-modified) are preserved and reported; nothing is
+# removed in that run, and --force-customized opts in to removing them
+# (they are backed up first).
+#
 # Usage:
 #   ./scripts/install.sh                      # global install
 #   ./scripts/install.sh --project [dir]      # project-local install (dir defaults to $PWD)
 #   ./scripts/install.sh --overwrite          # replace differing files (with backup)
 #   ./scripts/install.sh --uninstall          # remove installed files (with backup)
 #   ./scripts/install.sh --dry-run            # print actions, change nothing
+#   ./scripts/install.sh --allow-redirected-destination
+#                                             # accept a redirected destination
+#   ./scripts/install.sh --uninstall --force-customized
+#                                             # also remove customized files
 #   ./scripts/install.sh --help
 
 set -euo pipefail
@@ -29,6 +45,8 @@ PROJECT_DIR=""
 OVERWRITE=0
 UNINSTALL=0
 DRYRUN=0
+ALLOW_REDIRECTED_DESTINATION=0
+FORCE_CUSTOMIZED=0
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
 usage() {
@@ -41,9 +59,16 @@ Options:
   --overwrite         Replace differing existing files after creating backups.
   --uninstall         Remove installed LOOP files (backing them up first).
   --dry-run           Print what would happen without changing anything.
+  --allow-redirected-destination
+                      Proceed even when a destination path component is a
+                      symlink, junction, or other reparse point (the
+                      destination would resolve outside the intended tree).
+  --force-customized  With --uninstall: also remove paths that differ from
+                      LOOP's sources (user-owned or customized); they are
+                      backed up first.
   -h, --help          Show this help.
 
-Exit codes: 0 = success (including "already up to date"), 1 = error or refused overwrite.
+Exit codes: 0 = success (including "already up to date"), 1 = error or refused action.
 EOF
 }
 
@@ -76,6 +101,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dry-run)
       DRYRUN=1
+      shift
+      ;;
+    --allow-redirected-destination)
+      ALLOW_REDIRECTED_DESTINATION=1
+      shift
+      ;;
+    --force-customized)
+      FORCE_CUSTOMIZED=1
       shift
       ;;
     -h|--help)
@@ -135,11 +168,75 @@ DEST_COMMAND="$DEST_ROOT/commands/loop.md"
 DEST_SKILL_DIR="$DEST_ROOT/skills/loop-engine"
 DEST_HELPER="$DEST_ROOT/scripts/continuity.mjs"
 
+# Operator-supplied root anchor: the preflight verifies every component
+# between this root and the destinations (this deliberately includes
+# DEST_ROOT's own component and the backup root). The anchor itself is the
+# operator's choice (XDG_CONFIG_HOME / project dir) and is not re-judged.
+if [ "$SCOPE" = "project" ]; then
+  ROOT_ANCHOR="$PROJECT_DIR"
+elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+  ROOT_ANCHOR="$XDG_CONFIG_HOME"
+else
+  ROOT_ANCHOR="$HOME"
+fi
+
 note "Scope: $SCOPE"
 note "Destination: $DEST_ROOT"
 if [ "$DRYRUN" -eq 1 ]; then
   note "DRY RUN - no files will be changed."
 fi
+
+# --- Destination containment preflight (P9) ----------------------------------
+# Every path component between the operator-supplied root and each destination
+# (including the destinations themselves) must be a real directory, not a
+# symlink, junction, or reparse point - otherwise installs, backups, and
+# uninstall removals silently follow the link outside the intended tree
+# (reproduced 2026-11-09: a junctioned destRoot received all installer writes
+# while the installer reported success at the canonical path). The preflight
+# runs before ANY mutation, for both install and uninstall. A redirected
+# destination is refused with its resolved real target;
+# --allow-redirected-destination opts in explicitly (the resolved target is
+# then printed so the operator always sees it).
+check_containment() {
+  # $1 = anchor root, $2 = destination path to verify
+  local anchor="$1" target="$2" rel acc comp resolved
+  rel="$target"
+  if [ "$rel" != "$anchor" ]; then
+    case "$rel" in
+      "$anchor"/*) rel="${rel#"$anchor"/}" ;;
+      *) rel="${rel#/}" ;;
+    esac
+  else
+    rel=""
+  fi
+  acc="$anchor"
+  while [ -n "$rel" ]; do
+    comp="${rel%%/*}"
+    rel="${rel#"$comp"}"
+    rel="${rel#/}"
+    if [ -z "$comp" ]; then
+      continue
+    fi
+    acc="$acc/$comp"
+    if [ -L "$acc" ]; then
+      resolved="$(readlink "$acc" 2>/dev/null || true)"
+      if [ "$ALLOW_REDIRECTED_DESTINATION" -eq 1 ]; then
+        note "Redirected destination accepted (--allow-redirected-destination): $acc -> ${resolved:-(target not reported)}"
+      else
+        fail "Refusing: destination component is a symlink, junction, or reparse point: $acc"
+        note "It resolves to: ${resolved:-(target not reported)}"
+        note "Writing or removing files here would follow the link outside the"
+        note "intended destination. Remove the link and re-run, or re-run with"
+        note "--allow-redirected-destination to accept the redirection explicitly."
+        exit 1
+      fi
+    fi
+  done
+}
+check_containment "$ROOT_ANCHOR" "$DEST_COMMAND"
+check_containment "$ROOT_ANCHOR" "$DEST_SKILL_DIR"
+check_containment "$ROOT_ANCHOR" "$DEST_HELPER"
+check_containment "$ROOT_ANCHOR" "$BACKUP_ROOT"
 
 # --- Helpers -----------------------------------------------------------------
 files_identical() { cmp -s "$1" "$2"; }
@@ -178,23 +275,83 @@ backup_and_remove() {
   note "Backed up: $1 -> $backup"
 }
 
-# --- Uninstall ---------------------------------------------------------------
+# --- Uninstall (ownership-aware, P9) -----------------------------------------
+# LOOP removes ONLY paths verified as unchanged LOOP-installed artifacts
+# (byte-identical to the current sources). A path that differs may be
+# user-created or user-modified; refusing it keeps a customized /loop on the
+# user's machine. The refusal is atomic: nothing is removed in a refused run.
+target_is_pristine() {
+  # $1 = destination target, $2 = source counterpart; 0 = content-identical
+  local target="$1" src="$2"
+  if [ -f "$target" ] && [ -f "$src" ]; then
+    files_identical "$target" "$src"
+  elif [ -d "$target" ] && [ -d "$src" ]; then
+    dirs_identical "$target" "$src"
+  else
+    return 1
+  fi
+}
+
+uninstall_one() {
+  # $1 = destination target, $2 = source counterpart, $3 = short label
+  # Pass 1 (classify) prints the verdict and returns:
+  #   0 = absent, 1 = pristine (would be removed), 2 = conflict (preserved)
+  local target="$1" src="$2" label="$3"
+  if [ ! -e "$target" ]; then
+    note "Not installed (skipped): $target"
+    return 0
+  fi
+  if target_is_pristine "$target" "$src"; then
+    return 1
+  fi
+  CONFLICTS=$((CONFLICTS + 1))
+  note "Preserving differing path ($label): $target"
+  note "  It is not byte-identical to LOOP's current sources, so it may be"
+  note "  user-created or user-modified. LOOP does not remove it by default."
+  CONFLICT_LIST="$CONFLICT_LIST  $target
+"
+  return 2
+}
+
 if [ "$UNINSTALL" -eq 1 ]; then
-  removed=0
-  for target in "$DEST_COMMAND" "$DEST_SKILL_DIR" "$DEST_HELPER"; do
-    if [ ! -e "$target" ]; then
-      note "Not installed (skipped): $target"
-      continue
-    fi
-    backup_and_remove "$target"
-    removed=$((removed + 1))
-  done
+  REMOVED=0
+  CONFLICTS=0
+  CONFLICT_LIST=""
+  # Pass 1 - classify everything BEFORE any mutation: the refusal is atomic,
+  # so a customized/user-owned path blocks the whole uninstall, not only
+  # itself. (Classifier returns non-zero as its verdict; || true keeps the
+  # script alive under set -e.)
+  uninstall_one "$DEST_COMMAND" "$SRC_COMMAND" "command" || true
+  uninstall_one "$DEST_SKILL_DIR" "$SRC_SKILL_DIR" "skill" || true
+  uninstall_one "$DEST_HELPER" "$SRC_HELPER" "helper" || true
+  if [ "$CONFLICTS" -gt 0 ] && [ "$FORCE_CUSTOMIZED" -ne 1 ]; then
+    fail "Uninstall refused: $CONFLICTS customized/user-owned path(s) differ from LOOP's sources; nothing was removed."
+    note "These paths were preserved:"
+    printf '%s' "$CONFLICT_LIST"
+    note "Remove them manually if they are truly user content, or re-run with"
+    note "--force-customized to back them up and remove them too (backups are"
+    note "kept in $BACKUP_ROOT)."
+    exit 1
+  fi
+  # Pass 2 - remove the pristine targets (all targets when --force-customized).
+  if [ -e "$DEST_COMMAND" ]; then
+    backup_and_remove "$DEST_COMMAND"
+    REMOVED=$((REMOVED + 1))
+  fi
+  if [ -e "$DEST_SKILL_DIR" ]; then
+    backup_and_remove "$DEST_SKILL_DIR"
+    REMOVED=$((REMOVED + 1))
+  fi
+  if [ -e "$DEST_HELPER" ]; then
+    backup_and_remove "$DEST_HELPER"
+    REMOVED=$((REMOVED + 1))
+  fi
   if [ "$DRYRUN" -eq 1 ]; then
     note "DRY RUN complete; nothing was changed."
-  elif [ "$removed" -eq 0 ]; then
+  elif [ "$REMOVED" -eq 0 ]; then
     note "Nothing to uninstall; no LOOP files were present."
   else
-    note "Uninstall complete ($removed item(s) removed, backups kept in $BACKUP_ROOT)."
+    note "Uninstall complete ($REMOVED item(s) removed, backups kept in $BACKUP_ROOT)."
     note "Backups can be deleted manually when no longer needed."
   fi
   exit 0

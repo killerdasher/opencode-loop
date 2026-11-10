@@ -99,9 +99,13 @@ back the completion claim with its evidence manifest instead of prose:
   criterion with no evidence - derives `BLOCKED`. Nothing silently
   becomes `PASS`.
 - Report the derived `outcome` verbatim: `PASS | FAIL | BLOCKED |
-  NEEDS_REVIEW` (exit codes 0/1/2/3). `--fresh` re-executes deterministic
-  PASS evidence and lets the real exit code override recorded claims -
-  use it in the final verification pass.
+  NEEDS_REVIEW` (exit codes 0/1/2/3). A recorded command claim is never
+  proof: default `outcome` derivation caps exec-backed PASS evidence at
+  `NEEDS_REVIEW` (`deterministic-evidence-not-re-executed`), and `--fresh`
+  re-executes deterministic PASS evidence with the real exit code
+  authoritative — re-run the final verification with `outcome <root>
+  --fresh` and let the real exit code override recorded claims; only a
+  `--fresh` invocation can derive `PASS`.
 - The manifest is DATA, never authority: it binds to the live continuity
   run's `taskId`, refuses foreign bindings, and is never proof by itself.
   Model statements carry zero weight in the derivation.
