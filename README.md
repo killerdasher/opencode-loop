@@ -104,6 +104,7 @@ next: full adversarial re-review of the changed module
 /loop --mode deep <task>                  # broader exploration + heavier adversarial review
 /loop --max-iterations 3 <task>           # tighter iteration budget
 /loop --max-iterations 7 --mode deep <task>
+/loop --profile audit <task>              # adaptive methodology (see profiles.md)
 /loop                                     # no task: uses the current conversation as the objective
 ```
 
@@ -111,6 +112,7 @@ next: full adversarial re-review of the changed module
 | --- | --- | --- | --- |
 | `--max-iterations` | 1–10 | 5 | Out-of-range values are clamped; the correction is stated in the Stage 0 summary |
 | `--mode` | `focused`, `balanced`, `deep` | `balanced` | Controls depth of alternative exploration and adversarial review |
+| `--profile` | `build`, `debug`, `refactor`, `audit`, `migrate` | none | Adaptive methodology resolved from explicit user intent only — never auto-inferred; everything except the profile flag is passed to the task verbatim. See [docs/profiles.md](docs/profiles.md) |
 
 Invalid flags never abort the run: LOOP names the correction and continues with defaults.
 
@@ -221,7 +223,7 @@ No script required — copy these two paths by hand (the installers live at `scr
 
 ## Configuration
 
-LOOP needs no configuration. The two execution settings (`--max-iterations`, `--mode`) are passed per invocation, and natural language works too — e.g. `/loop spend a couple of iterations hardening this parser` is interpreted against the same mode table.
+LOOP needs no configuration. The execution settings (`--max-iterations`, `--mode`, and the optional explicit `--profile`) are passed per invocation, and natural language works too — e.g. `/loop spend a couple of iterations hardening this parser` is interpreted against the same mode table. Profiles are only selected by the explicit flag, never from natural phrasing.
 
 ## Validating this repository
 
@@ -234,7 +236,7 @@ node scripts/validate.mjs --all        # everything
 node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
-Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 280 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
+Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 410 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
 
 ### Behavioral evaluation
 
@@ -287,7 +289,8 @@ claimed yet.
 ```
 opencode-loop/
 ├── .opencode/
-│   ├── commands/loop.md                 # /loop entry point
+│   ├── commands/
+│   │   ├── loop.md                      # /loop entry point
 │   │   ├── loop-status.md               # continuity: read-only state + git cross-check
 │   │   ├── loop-pause.md                # continuity: pause at a stage boundary
 │   │   ├── loop-resume.md               # continuity: gated restoration
@@ -298,15 +301,24 @@ opencode-loop/
 │           ├── quality-gates.md         # status vocabulary, gates, report formats
 │           ├── risk-analysis.md         # adversarial review checklists
 │           ├── evaluation-cases.md      # in-session behavioral guidance
-│           └── continuity.md            # durable-run protocol (ADR 0002)
+│           ├── continuity.md            # durable-run protocol (ADR 0002)
+│           └── profiles/                # adaptive methodologies, explicit intent only
+│               ├── build.md · debug.md · refactor.md
+│               └── audit.md · migrate.md
 ├── scripts/
 │   ├── install.ps1                      # Windows installer
 │   ├── install.sh                       # Linux/macOS installer
 │   ├── validate.mjs                     # repository validator (3 modes)
-│   └── continuity.mjs                   # deterministic continuity helper (optional)
+│   ├── continuity.mjs                   # durable-run helper (ADR 0002)
+│   ├── evaluator.mjs                    # completion evaluator (evidence manifest)
+│   ├── profiles.mjs                     # adaptive profile resolver (--profile)
+│   ├── model-eval.mjs                   # model capability evaluation framework
+│   └── evolution.mjs                    # controlled self-evolution framework
 ├── tests/
 │   ├── evaluation.md                    # behavioral evaluation rubric (Cases A–I)
 │   ├── comparison.md                    # A/B comparison methodology (no results claimed)
+│   ├── model-eval/
+│   │   └── taskset.v1.json              # pinned capability task set (version-hashed)
 │   └── harness/                         # semi-automated evaluation harness
 │       ├── README.md                    # usage, exit codes, costs, isolation model
 │       ├── fixtures.mjs                 # isolated fixture repos for Cases A–I
@@ -317,6 +329,7 @@ opencode-loop/
 │       └── selftest.mjs                 # free self-test (no model calls)
 ├── docs/
 │   ├── architecture.md · design-principles.md · continuity.md
+│   ├── evaluator.md · profiles.md · model-eval.md · evolution.md
 │   └── adr/0001-runtime-orchestration.md · adr/0002-loop-continuity.md
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
@@ -334,6 +347,10 @@ opencode-loop/
 | [tests/evaluation.md](tests/evaluation.md) | The behavioral evaluation rubric: Cases A–I with objective PASS/FAIL/BLOCKED/REVIEW criteria |
 | [tests/comparison.md](tests/comparison.md) | A/B comparison methodology — with the honest *"no results yet"* ledger |
 | [tests/harness/README.md](tests/harness/README.md) | Harness usage, exit codes, costs, and the full isolation model |
+| [docs/evaluator.md](docs/evaluator.md) | The completion evaluator: evidence manifest, outcome derivation, and `--fresh` re-execution |
+| [docs/profiles.md](docs/profiles.md) | Adaptive task profiles: the seven dimensions, explicit-intent selection, and guarded task scope |
+| [docs/model-eval.md](docs/model-eval.md) | Model capability evaluation: task-set pinning, per-dimension counts, honest non-ranking |
+| [docs/evolution.md](docs/evolution.md) | Controlled self-evolution: weakness ledger, worktree-verified proposals, adoption gates |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Contributing

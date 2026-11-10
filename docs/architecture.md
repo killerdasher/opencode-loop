@@ -17,7 +17,11 @@ User types /loop <task> [--flags]
         │
         ├── references/quality-gates.md     status vocabulary, gates, report formats
         ├── references/risk-analysis.md     adversarial review checklists
-        └── references/evaluation-cases.md  behavioral guidance for atypical situations
+        ├── references/evaluation-cases.md  behavioral guidance for atypical situations
+        ├── references/continuity.md        durable-run protocol (ADR 0002)
+        └── references/profiles/            adaptive methodologies, loaded only for an
+            (build · debug · refactor ·     explicitly flagged run
+             audit · migrate)
 ```
 
 The command is a thin entry point; the skill is the engine. This separation exists because OpenCode discovers them independently: commands live in `commands/` and are invoked as `/name`, skills live in `skills/<name>/SKILL.md` and are loaded on demand through the native `skill` tool. The command's only jobs are argument handling and explicitly requesting the skill — all methodology lives in one place (the skill) so it can also be loaded without the command.
@@ -26,7 +30,7 @@ The command is a thin entry point; the skill is the engine. This separation exis
 
 1. **Invocation.** OpenCode expands `$ARGUMENTS` into the command template and sends the result as the prompt to the current agent (no agent/model override — the default agent runs LOOP).
 2. **Skill load.** The prompt instructs the agent to call `skill({ name: "loop-engine" })` first. The skill content is injected into the session context.
-3. **Settings resolution.** Flags are stripped from the argument text; the resolved `mode` and `iterations` are restated in the Stage 0 summary and used for every `LOOP | ITERATION n/N` banner.
+3. **Settings resolution.** Flags are stripped from the argument text; the resolved `mode` and `iterations` are restated in the Stage 0 summary and used for every `LOOP | ITERATION n/N` banner. An explicit `--profile` flag is resolved by `scripts/profiles.mjs` (exit 0 = active for the run, exit 4 = refused with the valid list and the run continues as the generic loop); any other flag is passed through to the task text untouched.
 4. **Iteration loop.** Stage 0–6 on iteration 1; stage 7 with a specific improvement objective plus stages 5–6 thereafter; stage 8 after every iteration decides continue vs. stop.
 5. **Reporting.** Requirements table, verification table, quality-gate table, adversarial findings, and the named stopping condition — all defined in `references/quality-gates.md`.
 
@@ -42,6 +46,10 @@ The command is a thin entry point; the skill is the engine. This separation exis
 | `XDG_CONFIG_HOME` honored by both installers | Matches OpenCode's own global-config resolution, makes the install destination standard instead of invented, and gives tests an isolation mechanism that never touches the real config. |
 | Case-exact path checks in the validator | Windows filesystems hide case mismatches that would break Linux/macOS installs; CI runs on Linux to catch them end-to-end. |
 | Behavioral evaluation lives in `tests/evaluation.md` | Structural checks are automated; behavioral judgment (Cases A–I) requires a live model session. The rubric defines observable criteria, and the semi-automated harness in `tests/harness/` executes them against real sessions — CI still runs only the free parts, never model calls. |
+| Completion claims are derived, not written (`scripts/evaluator.mjs`) | A model's completion statement carries zero weight: the outcome derives from an evidence manifest on disk, advisory-only evidence caps below `PASS`, missing verification derives `BLOCKED`, and `PASS` requires `--fresh` re-execution of recorded commands with real exit 0. Whatever the session asserts without running anything can never produce a green outcome. |
+| Profiles add specificity, never authority (`scripts/profiles.mjs`) | Selected only from an explicit `--profile` flag, never auto-inferred; every profile keeps the nine stages and hard safety rules intact — one removes no stage and cannot weaken Stage 8 evidence. An unknown profile is refused with the valid list, not fatal. |
+| Model comparisons refuse to rank (`scripts/model-eval.mjs`) | Records are allowlist-strict and hash-pinned to the exact task set, so records from different tasks or environments are never silently compared; output is per-dimension observed counts with an explicit non-ranking disclaimer. No capability profiles ship by default — marketing descriptions are not data. |
+| Self-evolution is sandboxed by construction (`scripts/evolution.mjs`) | Improvement candidates are proposed only from recorded failed evaluation cases and verified in detached git worktrees under the OS temp dir; regression-free candidates are compared on deterministic suite counts. Adoption additionally requires a named human approver, and the record layer always states that `appliedByTool: false` — nothing is published or applied automatically. |
 | Skill-only runtime retained (see `docs/adr/0001-runtime-orchestration.md`) | Plugins or an external orchestrator could enforce iteration caps and persist state, but would add the project's first dependency, break the two-file portability story, and couple to OpenCode APIs that change. The ADR records the comparison and the triggers that would reopen it. |
 | Behavioral evidence is local and gitignored | Transcripts contain model output; they are run artifacts, not repository content. The validator excludes `tests/harness/evidence/` from all checks and `.gitignore` (enforced by a check) keeps it out of commits. |
 
@@ -100,9 +108,24 @@ Resume discipline is gate-ordered (integrity → identity → no automatic resum
 
 User-facing guide: `docs/continuity.md`; the verbatim capability table and revisit triggers live in `docs/adr/0002-loop-continuity.md`.
 
+## Deterministic helpers
+
+Five zero-dependency Node scripts sit beside the workflow and the harness. None is required for `/loop` to run; each is fail-closed — when it cannot verify something, it refuses or caps the outcome rather than guessing:
+
+| Helper | Evidence all its claims live in | Hard rule |
+| --- | --- | --- |
+| `continuity.mjs` (ADR 0002) | `<project>/.loop/continuity.json`, archived to `.loop/archive/` | schema/identity-checked atomic writes; best-effort secret scan; no `--force` |
+| `evaluator.mjs` | `<project>/.loop/verification.json` | derives `PASS/FAIL/BLOCKED/NEEDS_REVIEW` from recorded evidence; PASS only via `--fresh` exit-0 re-execution |
+| `profiles.mjs` | the five profile references under the skill's `references/profiles/` | explicit flag only; exit 4 refuses a bad name with the valid list |
+| `model-eval.mjs` | operator-created record files with hash-pinned task sets | unknown fields refused; differing task sets never compared; non-ranking by construction |
+| `evolution.mjs` | append-only sanitized ledger + proposal verdict records | regression = permanent refuse; adoption = evidence + named approver, `appliedByTool: false` forever |
+
+The same helpers are cross-checked: the evaluator binds to the live continuity run's `taskId` and refuses cross-run or planted manifests; evolution consumes continuity archives and evaluator manifests as its only evidence sources; and the validator pins the contract each helper documents in its user guide (`docs/evaluator.md`, `docs/profiles.md`, `docs/model-eval.md`, `docs/evolution.md`).
+
 ## Compatibility
 
 - **OpenCode:** designed against the V2 documentation for Agent Skills (`SKILL.md`, `name`/`description` frontmatter, `^[a-z0-9]+(-[a-z0-9]+)*$` name rule) and custom commands (`commands/*.md`, `$ARGUMENTS`). Verified against OpenCode v2.2.5 during development.
 - **Installers:** Windows PowerShell 5.1+ (and pwsh), bash 3.2+ (macOS system bash) — no bashisms beyond POSIX plus `local`.
 - **Validator:** Node.js 16.7+ (`fs.cpSync`); developed and run on Node 24.
+- **Helpers** (`continuity.mjs`, `evaluator.mjs`, `profiles.mjs`, `model-eval.mjs`, `evolution.mjs`): all zero-dependency Node built-ins on the same Node.js 16.7+ baseline; no network calls, no package installs.
 - **Behavioral harness:** Node.js built-ins + git + the `opencode` CLI. Repeatable sessions use the officially documented `opencode run --format json` automation path (NDJSON transcript), verified against OpenCode v2.2.5.
