@@ -158,6 +158,8 @@ Take the stance of a skeptical senior engineer who did not write this implementa
 
 For every finding state: evidence (file and line, or a reproduction), the practical impact, and a severity - `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` / `INFORMATIONAL`. Do not manufacture vulnerabilities or imaginary problems; when something is suspected but unconfirmed, label it `SUSPECTED` and say how to confirm it.
 
+**Fresh-context review (optional, deep mode or high-risk work).** In-session review shares the implementer's context; when the run is `deep`, touches the trust chain, or carries accepted MEDIUM+ findings, offer the operator a fresh-context review - a separate session that re-examines the evidence package (objective, requirements, diff, test evidence, limitations, and the implementer's report last, labeled as claims) and reports reconcilable findings. The full contract lives in `references/fresh-review.md`; it is never mandatory, never auto-run, and its findings are reconciled into the evaluator manifest by the implementer.
+
 ## STAGE 7 - Improvement
 
 Fix in severity order: `CRITICAL` and `HIGH` before anything cosmetic; `MEDIUM` findings with real user impact when in scope; `LOW` and optional items only when cheap and clearly valuable. Each iteration carries exactly one primary improvement objective derived from the preceding review. Never repeat identical analysis without new evidence. When substantial changes have been made, rerun Stages 5 and 6 within the same iteration.

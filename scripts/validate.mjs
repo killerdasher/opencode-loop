@@ -39,6 +39,7 @@ const REQUIRED_FILES = [
   'scripts/install.sh',
   'scripts/validate.mjs',
   'scripts/continuity.mjs',
+  '.opencode/skills/loop-engine/references/fresh-review.md',
   'tests/evaluation.md',
   'tests/comparison.md',
   'tests/harness/README.md',
@@ -605,6 +606,19 @@ function validateRepo(root) {
       evaluator.includes('criteria-not-traced-to-task')
         ? 'criteria carry provenance origins; untraced objectives cap at NEEDS_REVIEW; traceability summary derived'
         : 'missing the requirements-traceability guard');
+    // P12 Phase 3: the optional fresh-context review must exist, state its
+    // own limits honestly, and be wired from SKILL.md without being mandatory.
+    const freshReview = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/fresh-review.md'));
+    const skillFresh = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
+    push('freshreview:reference',
+      freshReview !== null
+      && freshReview.includes('CONFIRMED | REFUTED | UNCONFIRMED')
+      && freshReview.includes('No runtime enforces')
+      && freshReview.includes('different model does not automatically')
+      && skillFresh !== null && skillFresh.includes('references/fresh-review.md'),
+      freshReview !== null
+        ? 'fresh-review reference defines the reconcilable-findings contract and is offered, never mandatory, from SKILL.md'
+        : 'references/fresh-review.md missing');
   }
   const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
   push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
@@ -1074,6 +1088,11 @@ function runSelfTest(root) {
         .split("CRITERION_ORIGINS = Object.freeze(['user', 'implied', 'platform', 'security', 'nonfunctional'])").join('CRITERION_ORIGINS = []')
         .split("c.origin ?? 'unspecified'").join("'unspecified'")
         .split('verified: coverage.filter').join('verifiedUnused: coverageFilterUnused'),
+    },
+    {
+      id: 'fresh-review reference deleted',
+      expect: 'freshreview:reference',
+      delete: '.opencode/skills/loop-engine/references/fresh-review.md',
     },
     {
       id: 'PowerShell installer drops the redirect preflight',

@@ -302,6 +302,7 @@ opencode-loop/
 │           ├── risk-analysis.md         # adversarial review checklists
 │           ├── evaluation-cases.md      # in-session behavioral guidance
 │           ├── continuity.md            # durable-run protocol (ADR 0002)
+│           ├── fresh-review.md          # optional fresh-context review contract
 │           └── profiles/                # adaptive methodologies, explicit intent only
 │               ├── build.md · debug.md · refactor.md
 │               └── audit.md · migrate.md

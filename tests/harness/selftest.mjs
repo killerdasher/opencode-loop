@@ -507,6 +507,24 @@ async function main() {
     const resumedInspect = C.inspectState(d, { expectedRoot: d });
     check('continuity:resume-returns-to-active',
       resumed.ok && resumed.state.status === 'ACTIVE' && resumedInspect.state.generation === 3);
+    // P12 Phase 3 (directive recovery scenario 7): a different model resumes.
+    // The state schema is model-agnostic by design - a state written by
+    // another session (here: the same state with a different createdBy,
+    // written the way an interrupted session would have left it) must not
+    // block any lifecycle transition, and the identity gates keep working.
+    const statePath = liveFile(d);
+    const foreign = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    foreign.createdBy = { sessionId: 'ses-other-device', model: 'some-other-provider/other-model' };
+    fs.writeFileSync(statePath, JSON.stringify(foreign, null, 2));
+    const crossPaused = C.opTransition(d, 'pause', { reason: 'session moved to another model' });
+    const crossResumed = C.opTransition(d, 'resume');
+    const crossInspect = C.inspectState(d, { expectedRoot: d });
+    check('continuity:cross-model-resume-unaffected',
+      crossPaused.ok && crossResumed.ok
+      && crossResumed.state.status === 'ACTIVE'
+      && crossInspect.identity === 'match'
+      && crossInspect.state.createdBy.model === 'some-other-provider/other-model',
+      `paused=${crossPaused.ok} resumed=${crossResumed.ok} model=${crossInspect.state.createdBy?.model}`);
   }
 
   // corrupt JSON: CORRUPT integrity, refuse-not-wipe (byte-for-byte preservat.
