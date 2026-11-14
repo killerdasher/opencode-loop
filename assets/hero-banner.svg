@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="LOOP - Iterative Engineering Engine for OpenCode">
+  <!-- LOOP visual identity: graphite / violet / cyan -->
+  <defs>
+    <linearGradient id="loopGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="wordGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#C9C9D6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="320" fill="#16161C"/>
+  <!-- faint dot grid, right side only, to keep the left clean -->
+  <g fill="#2A2A33">
+    <circle cx="880" cy="60" r="2"/><circle cx="920" cy="60" r="2"/><circle cx="960" cy="60" r="2"/><circle cx="1000" cy="60" r="2"/><circle cx="1040" cy="60" r="2"/><circle cx="1080" cy="60" r="2"/><circle cx="1120" cy="60" r="2"/><circle cx="1160" cy="60" r="2"/><circle cx="1200" cy="60" r="2"/><circle cx="1240" cy="60" r="2"/>
+    <circle cx="880" cy="110" r="2"/><circle cx="920" cy="110" r="2"/><circle cx="960" cy="110" r="2"/><circle cx="1000" cy="110" r="2"/><circle cx="1040" cy="110" r="2"/><circle cx="1080" cy="110" r="2"/><circle cx="1120" cy="110" r="2"/><circle cx="1160" cy="110" r="2"/><circle cx="1200" cy="110" r="2"/><circle cx="1240" cy="110" r="2"/>
+    <circle cx="880" cy="160" r="2"/><circle cx="920" cy="160" r="2"/><circle cx="960" cy="160" r="2"/><circle cx="1000" cy="160" r="2"/><circle cx="1040" cy="160" r="2"/><circle cx="1080" cy="160" r="2"/><circle cx="1120" cy="160" r="2"/><circle cx="1160" cy="160" r="2"/><circle cx="1200" cy="160" r="2"/><circle cx="1240" cy="160" r="2"/>
+    <circle cx="880" cy="210" r="2"/><circle cx="920" cy="210" r="2"/><circle cx="960" cy="210" r="2"/><circle cx="1000" cy="210" r="2"/><circle cx="1040" cy="210" r="2"/><circle cx="1080" cy="210" r="2"/><circle cx="1120" cy="210" r="2"/><circle cx="1160" cy="210" r="2"/><circle cx="1200" cy="210" r="2"/><circle cx="1240" cy="210" r="2"/>
+    <circle cx="880" cy="260" r="2"/><circle cx="920" cy="260" r="2"/><circle cx="960" cy="260" r="2"/><circle cx="1000" cy="260" r="2"/><circle cx="1040" cy="260" r="2"/><circle cx="1080" cy="260" r="2"/><circle cx="1120" cy="260" r="2"/><circle cx="1160" cy="260" r="2"/><circle cx="1200" cy="260" r="2"/><circle cx="1240" cy="260" r="2"/>
+  </g>
+  <!-- iteration loop mark -->
+  <g fill="none" stroke="url(#loopGrad)" stroke-linecap="round">
+    <path d="M 138 208 V 128 a 30 30 0 0 1 30 -30 h 64 a 30 30 0 0 1 30 30 v 64 a 30 30 0 0 1 -30 30 H 168"
+          stroke-width="18"/>
+  </g>
+  <path d="M 166 222 L 184 212 L 184 232 Z" fill="#22D3EE"/>
+  <circle cx="138" cy="208" r="10" fill="#8B5CF6"/>
+  <!-- wordmark + tagline -->
+  <text x="330" y="170" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="88" font-weight="650" letter-spacing="16" fill="url(#wordGrad)">LOOP</text>
+  <text x="332" y="222" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="27" fill="#8B95A8">Iterative Engineering Engine for OpenCode</text>
+  <!-- status pill -->
+  <rect x="332" y="248" width="330" height="40" rx="20" fill="#1E1E24" stroke="#2E2E3A"/>
+  <circle cx="356" cy="268" r="6" fill="#22D3EE"/>
+  <text x="374" y="274" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="18" fill="#C9C9D6">analyze · implement · verify · review</text>
+</svg>

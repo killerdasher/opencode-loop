@@ -1,6 +1,10 @@
-# LOOP — Iterative Engineering Engine for OpenCode
+<p align="center">
+  <img src="assets/hero-banner.svg" alt="LOOP — Iterative Engineering Engine for OpenCode" width="100%">
+</p>
 
 [![validate](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml/badge.svg)](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml) [![release](https://img.shields.io/github/v/release/killerdasher/opencode-loop)](https://github.com/killerdasher/opencode-loop/releases)
+
+<!-- social-preview fallback: assets/loop-logo.svg (square mark) -->
 
 *Iterative engineering workflow for OpenCode • zero dependencies • works with any model • CI-tested on Linux and Windows for every push*
 
