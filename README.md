@@ -236,7 +236,7 @@ node scripts/validate.mjs --all        # everything
 node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
-Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 410 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
+Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 430 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
 
 ### Behavioral evaluation
 
