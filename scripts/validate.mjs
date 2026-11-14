@@ -789,6 +789,17 @@ function validateRepo(root) {
     && evoFile.includes('rejected candidates can never be approved'),
     evoFile !== null ? 'regressions hard-reject; rejected proposals can never be approved'
       : 'scripts/evolution.mjs missing');
+  // P12 Phase 5: an optional executable acceptance command must gate the
+  // verdict - a candidate that fails its own mapped-weakness check in the
+  // candidate worktree is rejected even when every suite tier improves.
+  push('evolution:acceptance-command', evoFile !== null
+    && evoFile.includes('prop.raw.acceptanceCommand')
+    && evoFile.includes("tier: 'acceptance-command'")
+    && evoFile.includes('the mapped weakness was not addressed')
+    && evoFile.includes('[, "acceptanceCommand"]'),
+    evoFile !== null && evoFile.includes("tier: 'acceptance-command'")
+      ? 'acceptance command runs in both worktrees; candidate exit != 0 rejects the verdict'
+      : 'evolution.mjs missing the executable acceptance-command gate');
   push('evolution:claims-are-not-evidence', evoFile !== null
     && evoFile.includes('model-generated claims are never evidence'),
     evoFile !== null ? 'comparison verdict rests on deterministic counts only'
@@ -1093,6 +1104,19 @@ function runSelfTest(root) {
       id: 'fresh-review reference deleted',
       expect: 'freshreview:reference',
       delete: '.opencode/skills/loop-engine/references/fresh-review.md',
+    },
+    {
+      id: 'evolution acceptance command never gates the verdict',
+      expect: 'evolution:acceptance-command',
+      file: 'scripts/evolution.mjs',
+      // Drop the gate: the acceptance result would no longer reject a
+      // candidate whose mapped weakness still fails, and the field would
+      // silently become prose again.
+      apply: (t) => t
+        .split("tier: 'acceptance-command'").join("tier: 'acceptance-info-only'")
+        .split('prop.raw.acceptanceCommand').join('prop.raw.acceptanceMetric')
+        .split('the mapped weakness was not addressed').join('the mapped weakness was considered')
+        .split('[, "acceptanceCommand"]').join('[, "claim2"]'),
     },
     {
       id: 'PowerShell installer drops the redirect preflight',

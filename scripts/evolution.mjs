@@ -50,7 +50,10 @@
  *                 evidence and can never be approved.
  *   Known, disclosed proxy limitation: tier passed-counts are a structural
  *   metric - renaming a check or splitting it reads as a regression. The
- *   bias is deliberately conservative on the side of rejection.
+ *   bias is deliberately conservative on the side of rejection. When the
+ *   proposal carries an acceptanceCommand, the verdict additionally demands
+ *   that the candidate actually passes it in its own worktree: the mapped
+ *   weakness gets tested, not just narrated (P12 Phase 5).
  *
  * RECORD SCHEMA (v1) - one JSON file per record in the data dir
  *   ledger entry : { schemaVersion, tool, kind:'ledger', entryId, collectedAt,
@@ -64,7 +67,8 @@
  *   comparison   : { schemaVersion, tool, kind:'comparison', comparisonId,
  *                    proposalId, createdAt, baseCommit, candidateCommit,
  *                    suites, stable[], candidate[], verdict, regressions[],
- *                    improvements[], worktreesRemoved, worktreesLeft[] },
+ *                    improvements[], acceptance?{command,stableExit,candidateExit},
+ *                    worktreesRemoved, worktreesLeft[] },
  *   approval     (published in the proposal record's `approval` field)
  *   Every write fails closed on secret-shaped content (scanner reused from
  *   continuity.mjs) and uses atomic temp+fsync+rename writes.
@@ -307,7 +311,7 @@ export function createProposal(dataDir, input) {
   const dirErr = guardDataDir(dataDir);
   if (dirErr) return { ok: false, reason: dirErr };
   const {
-    weaknessClass, mappedEntryIds, changeTitle, changeSummary, acceptanceMetric, claim, createdAt,
+    weaknessClass, mappedEntryIds, changeTitle, changeSummary, acceptanceMetric, acceptanceCommand, claim, createdAt,
   } = input ?? {};
   if (!WEAKNESS_CLASSES.includes(weaknessClass)) {
     return { ok: false, reason: `weaknessClass must be one of ${WEAKNESS_CLASSES.join('|')}` };
@@ -325,6 +329,12 @@ export function createProposal(dataDir, input) {
   if (!isStr(changeTitle) || !isStr(changeSummary) || !isStr(acceptanceMetric)) {
     return { ok: false, reason: 'changeTitle, changeSummary and acceptanceMetric are required (the metric is what the verdict will measure)' };
   }
+  // P12 Phase 5: an optional executable acceptance command (same
+  // whitespace-split, no-shell convention as suite commands) turns the
+  // acceptance metric from prose into a check the candidate must pass.
+  if (acceptanceCommand !== undefined && (!isStr(acceptanceCommand) || !acceptanceCommand.trim())) {
+    return { ok: false, reason: 'acceptanceCommand must be a non-empty command string when present' };
+  }
   const proposal = {
     schemaVersion: EV_SCHEMA_VERSION,
     tool: EV_TOOL_ID,
@@ -336,6 +346,7 @@ export function createProposal(dataDir, input) {
     changeTitle,
     changeSummary,
     acceptanceMetric,
+    acceptanceCommand: typeof acceptanceCommand === 'string' && acceptanceCommand.trim() ? acceptanceCommand : undefined,
     claim: typeof claim === 'string' && claim.length > 0 ? { text: claim, evidence: false } : undefined,
     status: 'open',
   };
@@ -418,6 +429,11 @@ export function verifyCandidate(dataDir, repoRoot, { proposalId, baseRef, candid
       return { ok: false, reason: 'each suite needs name, command and an integer expectedSummaries >= 1' };
     }
   }
+  // P12 Phase 5: optional executable acceptance command from the proposal.
+  const accCommand = prop.raw.acceptanceCommand;
+  if (accCommand !== undefined && (!isStr(accCommand) || !accCommand.trim())) {
+    return { ok: false, reason: 'acceptanceCommand must be a non-empty command string when present' };
+  }
 
   const comparisonId = sha16(`${proposalId}\u0000${base.commit}\u0000${cand.commit}\u0000${createdAt}`);
   const wtRoot = path.join(os.tmpdir(), `loop-evolution-wt-${comparisonId}`);
@@ -452,11 +468,36 @@ export function verifyCandidate(dataDir, repoRoot, { proposalId, baseRef, candid
   // STEP 7: run the FULL regression suite on both sides (no shell).
   const stable = suites.map((s) => runSuite(stableWt, s));
   const candidate = suites.map((s) => runSuite(candidateWt, s));
+  // P12 Phase 5: the acceptance command turns the proposal's
+  // acceptanceMetric from prose into a check. It runs in both worktrees
+  // (same whitespace-split, no-shell convention as suite commands): the
+  // stable side may fail - that is the recorded weakness - but the
+  // candidate MUST exit 0, otherwise the mapped weakness was not actually
+  // addressed and the candidate is rejected on that alone. Runs before
+  // worktree cleanup, same as the suites.
+  let acceptance = null;
+  let acceptanceFailure = null;
+  if (accCommand !== undefined) {
+    const accArgv = accCommand.split(/\s+/).filter(Boolean);
+    const accRun = (wt) => {
+      const r = spawnSync(accArgv[0], accArgv.slice(1), { cwd: wt, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+      return r.status ?? -1;
+    };
+    const stableExit = accRun(stableWt);
+    const candidateExit = accRun(candidateWt);
+    acceptance = { command: accCommand, stableExit, candidateExit };
+    if (candidateExit !== 0) {
+      acceptanceFailure = `acceptance command exited ${candidateExit} in the candidate (stable exit ${stableExit}) - the mapped weakness was not addressed`;
+    }
+  }
   cleanup();
 
   // STEP 8 + 9: deterministic comparison; regressions reject, by rule.
   const regressions = [];
   const improvements = [];
+  if (acceptanceFailure !== null) {
+    regressions.push({ tier: 'acceptance-command', regression: acceptanceFailure, acceptance });
+  }
   for (let i = 0; i < suites.length; i += 1) {
     const a = stable[i];
     const b = candidate[i];
@@ -489,6 +530,7 @@ export function verifyCandidate(dataDir, repoRoot, { proposalId, baseRef, candid
     verdict,
     regressions,
     improvements,
+    ...(acceptance !== null ? { acceptance } : {}),
     worktreesRemoved: worktreesLeft.length === 0,
     worktreesLeft,
     evidenceNote: COMPARISON_NOTE,
@@ -613,6 +655,7 @@ export function buildReport(dataDir, { proposalId }) {
         candidateCommit: latest.candidateCommit,
         regressions: latest.regressions,
         improvements: latest.improvements,
+        acceptance: latest.acceptance ?? null,
         tiers,
       } : null,
       limitations: {
@@ -637,7 +680,12 @@ function usage() {
     '  collect <dir> --archives PATH            sanitize .loop/archive/*.json (+ verification.json)',
     '  patterns <dir>                           classify weaknesses + recurring failure patterns',
     '  propose <dir> --from-stdin               {"weaknessClass","mappedEntryIds",[...]',
-    '                                            "changeTitle","changeSummary","acceptanceMetric" [, "claim"]}',
+    '                                            "changeTitle","changeSummary","acceptanceMetric"',
+    '                                            [, "acceptanceCommand"] [, "claim"]}',
+    '                                           acceptanceCommand (optional, same',
+    '                                           no-shell convention) runs in both',
+    '                                           worktrees: the candidate must exit 0',
+    '                                           or the verdict is REJECTED',
     '  verify <dir> --proposal P [--base SHA] [--candidate SHA]',
     '         [--repo PATH] [--keep-worktrees] --from-stdin   {"suiteSpec":[{"name","command","expectedSummaries"}]} optional',
     '                                           isolated worktrees; full regression suite on both sides;',

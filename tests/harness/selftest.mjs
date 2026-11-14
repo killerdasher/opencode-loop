@@ -1615,6 +1615,52 @@ async function main() {
       check('evolution:improvement-required-measurable',
         vI.ok === true && vI.verdict === 'IMPROVED' && vI.worktreesLeft.length === 0,
         `5 -> 6 passed => IMPROVED`);
+      // P12 Phase 5: executable acceptance command - the mapped weakness is
+      // tested in the candidate worktree, not narrated. The candidate must
+      // exit 0 or the verdict is REJECTED even when every suite tier improves;
+      // the stable side failing is expected (that IS the recorded weakness).
+      fs.writeFileSync(path.join(repo, 'acceptance.mjs'), 'process.exit(1);');
+      g('add', '-A'); g('commit', '-qm', 'candidate: acceptance still failing');
+      const candFailSha = g('rev-parse', 'HEAD').stdout.trim();
+      fs.writeFileSync(path.join(repo, 'acceptance.mjs'), 'process.exit(0);');
+      g('add', '-A'); g('commit', '-qm', 'candidate: acceptance addressed');
+      const candPassSha = g('rev-parse', 'HEAD').stdout.trim();
+      const entriesAcc = EVX.readLedger(evoDir).entries;
+      const propAF = EVX.createProposal(evoDir, {
+        weaknessClass: 'validation', mappedEntryIds: [entriesAcc[0].entryId],
+        changeTitle: 'acceptance failing case', changeSummary: 'suite improves but the weakness remains',
+        acceptanceMetric: 'acceptance exits 0', acceptanceCommand: 'node acceptance.mjs',
+        createdAt: '2026-11-07T05:02:00Z',
+      }).proposalId;
+      const propAP = EVX.createProposal(evoDir, {
+        weaknessClass: 'validation', mappedEntryIds: [entriesAcc[0].entryId],
+        changeTitle: 'acceptance passing case', changeSummary: 'suite improves and the weakness is addressed',
+        acceptanceMetric: 'acceptance exits 0', acceptanceCommand: 'node acceptance.mjs',
+        createdAt: '2026-11-07T05:03:00Z',
+      }).proposalId;
+      const propAFRec = JSON.parse(fs.readFileSync(path.join(evoDir, `proposal-${propAF}.json`), 'utf8'));
+      const vAF = EVX.verifyCandidate(evoDir, repo, { proposalId: propAF, baseRef: baseSha, candidateRef: candFailSha, suiteSpec: spec, createdAt: '2026-11-07T05:04:00Z' });
+      const compAF = JSON.parse(fs.readFileSync(path.join(evoDir, `comparison-${vAF.comparisonId}.json`), 'utf8'));
+      check('evolution:acceptance-command-failure-rejects',
+        vAF.ok === true && vAF.verdict === 'REJECTED'
+        && propAFRec.acceptanceCommand === 'node acceptance.mjs'
+        && compAF.regressions.some((r) => r.tier === 'acceptance-command')
+        && compAF.acceptance && compAF.acceptance.candidateExit === 1,
+        `verdict=${vAF.verdict} candidateExit=${compAF.acceptance?.candidateExit}`);
+      const vAP = EVX.verifyCandidate(evoDir, repo, { proposalId: propAP, baseRef: baseSha, candidateRef: candPassSha, suiteSpec: spec, createdAt: '2026-11-07T05:05:00Z' });
+      const compAP = JSON.parse(fs.readFileSync(path.join(evoDir, `comparison-${vAP.comparisonId}.json`), 'utf8'));
+      check('evolution:acceptance-command-pass-recorded',
+        vAP.ok === true && vAP.verdict === 'IMPROVED'
+        && compAP.acceptance && compAP.acceptance.stableExit !== 0 && compAP.acceptance.candidateExit === 0,
+        `verdict=${vAP.verdict} stable=${compAP.acceptance?.stableExit} candidate=${compAP.acceptance?.candidateExit}`);
+      const badAcc = EVX.createProposal(evoDir, {
+        weaknessClass: 'validation', mappedEntryIds: [entriesAcc[0].entryId],
+        changeTitle: 'bad acceptance type', changeSummary: 'x', acceptanceMetric: 'y', acceptanceCommand: 42,
+        createdAt: '2026-11-07T05:06:00Z',
+      });
+      check('evolution:acceptance-command-validated',
+        badAcc.ok === false && badAcc.reason.includes('acceptanceCommand must be a non-empty command string'),
+        `ok=${badAcc.ok}`);
       // --keep-worktrees is honored: nothing is removed, paths left for inspection
       const propK = EVX.createProposal(evoDir, { weaknessClass: 'references', mappedEntryIds: [entries[1].entryId], changeTitle: 'kept worktrees case', changeSummary: 'no change', acceptanceMetric: 'equal counts', createdAt: '2026-11-07T04:03:00Z' }).proposalId;
       const vK = EVX.verifyCandidate(evoDir, repo, { proposalId: propK, baseRef: baseSha, candidateRef: baseSha, suiteSpec: spec, createdAt: '2026-11-07T05:03:00Z', keepWorktrees: true });
