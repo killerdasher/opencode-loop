@@ -594,6 +594,17 @@ function validateRepo(root) {
       evaluator.includes('ins.state.taskId !== base.taskId')
         ? 'record refuses a manifest bound to another run, with the explicit remedy'
         : 'missing the record-time cross-run binding refusal');
+    // P12 Phase 2: requirements traceability - origin allowlist, the
+    // no-user-sourced-criteria cap, and the identified/implemented/verified
+    // summary must all exist in the derivation code.
+    push('evaluator:traceability-guard',
+      evaluator.includes('CRITERION_ORIGINS')
+      && evaluator.includes('criteria-not-traced-to-task')
+      && evaluator.includes("c.origin ?? 'unspecified'")
+      && evaluator.includes('verified: coverage.filter'),
+      evaluator.includes('criteria-not-traced-to-task')
+        ? 'criteria carry provenance origins; untraced objectives cap at NEEDS_REVIEW; traceability summary derived'
+        : 'missing the requirements-traceability guard');
   }
   const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
   push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
@@ -1050,6 +1061,19 @@ function runSelfTest(root) {
         .split('ins.state.taskId !== base.taskId').join('false')
         .split('belongs to a completed or different run').join('belongs to another context')
         .split('back it up and remove .loop/verification.json').join('consider the binding'),
+    },
+    {
+      id: 'evaluator loses requirements traceability',
+      expect: 'evaluator:traceability-guard',
+      file: 'scripts/evaluator.mjs',
+      // Remove the origin allowlist, the not-traced cap, the neutral-origin
+      // default and the verified summary: criteria provenance would no
+      // longer be guarded anywhere.
+      apply: (t) => t
+        .split('criteria-not-traced-to-task').join('criteria-origins-ok')
+        .split("CRITERION_ORIGINS = Object.freeze(['user', 'implied', 'platform', 'security', 'nonfunctional'])").join('CRITERION_ORIGINS = []')
+        .split("c.origin ?? 'unspecified'").join("'unspecified'")
+        .split('verified: coverage.filter').join('verifiedUnused: coverageFilterUnused'),
     },
     {
       id: 'PowerShell installer drops the redirect preflight',

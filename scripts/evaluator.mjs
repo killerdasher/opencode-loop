@@ -87,6 +87,11 @@ export const EVIDENCE_VERDICTS = Object.freeze([
   'PASS', 'FAIL', 'BLOCKED', 'UNVERIFIED',
 ]);
 export const REQUIREMENTS = Object.freeze(['MUST', 'SHOULD', 'COULD']);
+// P12 Phase 2: criteria may carry a provenance origin. 'user' means the
+// criterion traces to the operator's own task text; the others record where
+// an added essential came from. Absence stays neutral ('unspecified') so
+// legacy manifests are never penalized.
+export const CRITERION_ORIGINS = Object.freeze(['user', 'implied', 'platform', 'security', 'nonfunctional']);
 export const SEVERITIES = Object.freeze([
   'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL',
 ]);
@@ -140,6 +145,8 @@ export function validateManifest(raw) {
     if (!isPlainId(c.id)) { pushE(`criterion id invalid: ${JSON.stringify(c.id)}`); continue; }
     if (!seen(c.id, 'criterion')) continue;
     if (!REQUIREMENTS.includes(c.requirement)) pushE(`criterion ${c.id}: requirement must be one of ${REQUIREMENTS.join('|')}`);
+    if (c.origin !== undefined && !CRITERION_ORIGINS.includes(c.origin)) pushE(`criterion ${c.id}: origin must be one of ${CRITERION_ORIGINS.join('|')} when present`);
+    if (c.sourceText !== undefined && !isStr(c.sourceText)) pushE(`criterion ${c.id}: sourceText must be a non-empty string when present`);
     if (!isStr(c.text)) pushE(`criterion ${c.id}: text must be a non-empty string`);
     if (c.artifact !== undefined && !isArtifactRel(c.artifact)) pushE(`criterion ${c.id}: artifact must be a relative project path without ".."`);
   }
@@ -481,10 +488,38 @@ export function deriveOutcome(projectRoot, { fresh = false } = {}) {
       reasons.push({ code: 'should-uncovered', detail: cid });
     }
   }
+  // P12 Phase 2: requirements traceability summary - distinguish identified
+  // (criteria declared, by provenance origin) from implemented (any real
+  // coverage), verified (fresh re-executed exit 0) and sufficient (the
+  // derived outcome itself). Reported alongside the outcome, never instead
+  // of it; the evaluator cannot invent criteria the run failed to record.
+  const originCounts = {};
+  for (const c of manifest.criteria ?? []) {
+    const o = c.origin ?? 'unspecified';
+    originCounts[o] = (originCounts[o] ?? 0) + 1;
+  }
+  const traceability = {
+    identified: coverage.length,
+    byOrigin: originCounts,
+    implemented: coverage.filter(([, s]) =>
+      ![COVER.MISSING, COVER.UNVERIFIED, COVER.BLOCKED_VERDICT].includes(s.state)).length,
+    verified: coverage.filter(([, s]) => s.state === COVER.DETERMINISTIC).length,
+  };
   for (const f of manifest.findings ?? []) {
     if (!f.resolved && (f.severity === 'MEDIUM' || f.severity === 'LOW')) {
       reasons.push({ code: 'open-severity-finding', detail: `${f.id} (${f.severity})` });
     }
+  }
+  // P12 Phase 2: requirements traceability guard. A run that declares origins
+  // but has no user-sourced criterion has substituted its own objective for
+  // the operator's - an omitted-requirement protection that caps at
+  // NEEDS_REVIEW even when every recorded command re-executes green.
+  const declared = (manifest.criteria ?? []).filter((c) => c.origin !== undefined);
+  if (declared.length > 0 && !declared.some((c) => c.origin === 'user')) {
+    reasons.push({
+      code: 'criteria-not-traced-to-task',
+      detail: `no criterion traces to the user's task text (origins: ${[...new Set(declared.map((c) => c.origin))].join(', ')})`,
+    });
   }
   let outcome;
   if (reasons.some((r) => r.code === 'unresolved-blocker'
@@ -499,10 +534,10 @@ export function deriveOutcome(projectRoot, { fresh = false } = {}) {
     outcome = mustOk ? 'PASS' : 'BLOCKED'; // unreachable mustOk=false is an invariant guard
     if (!mustOk) reasons.push({ code: 'invariant-must-deterministic', detail: 'PASS requires deterministic MUST coverage' });
   }
-  return finish(outcome, reasons, coverage, reRun, manifest);
+  return finish(outcome, reasons, coverage, reRun, manifest, traceability);
 }
 
-function finish(outcome, reasons, coverage, reRun, manifest) {
+function finish(outcome, reasons, coverage, reRun, manifest, traceability = null) {
   return {
     ok: true,
     outcome,
@@ -510,6 +545,7 @@ function finish(outcome, reasons, coverage, reRun, manifest) {
     coverage,
     reRun,
     ...(manifest ? { taskId: manifest.taskId ?? null } : {}),
+    ...(traceability ? { traceability: { ...traceability, sufficient: outcome } } : {}),
   };
 }
 
@@ -525,12 +561,20 @@ function usage() {
     '',
     '  record <r> --from-stdin        merge criteria/evidence/findings/blockers',
     '                                 (a JSON object with those array keys)',
+    '                                 criteria accept an optional origin',
+    '                                 (user|implied|platform|security|nonfunctional)',
+    '                                 and optional sourceText quoting the task;',
+    '                                 a manifest that declares origins but never',
+    '                                 traces one to the user task caps at',
+    '                                 NEEDS_REVIEW (criteria-not-traced-to-task)',
     '  outcome <r> [--fresh]          derive the completion outcome; --fresh',
     '                                 re-executes deterministic PASS evidence.',
     '                                 PASS is only derivable with --fresh: a',
     '                                 recorded command claim that was not',
     '                                 re-executed caps the outcome at',
-    '                                 NEEDS_REVIEW',
+    '                                 NEEDS_REVIEW. The result carries a',
+    '                                 traceability summary: identified (by',
+    '                                 origin), implemented, verified, sufficient',
     '  help                           this text',
     '',
     'Manifest: ' + VERIFICATION_REL,

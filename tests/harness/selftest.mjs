@@ -906,6 +906,84 @@ async function main() {
       `later ok=${later.ok}`);
   }
 
+  // P12 Phase 2: requirements traceability. Criteria may carry an origin
+  // tracing them to the operator's task text; the outcome reports identified
+  // (by origin) / implemented / verified / sufficient, and a manifest that
+  // declares origins without any user-sourced criterion can never PASS -
+  // invented criteria must not silently replace the operator's objective.
+  {
+    const d = contProject('eval-trace-user');
+    C.opInitialize(d, { objective: 'traced run' });
+    const rec = EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-user', requirement: 'MUST', text: 'deliverable exists', origin: 'user', sourceText: 'build the deliverable' },
+        { id: 'must-sec', requirement: 'MUST', text: 'no secrets logged', origin: 'security' },
+      ],
+      evidence: [
+        { id: 'ev-user', verdict: 'PASS', criterionIds: ['must-user'], exec: nodeExit(0) },
+        { id: 'ev-sec', verdict: 'PASS', criterionIds: ['must-sec'], exec: nodeExit(0) },
+      ],
+    });
+    const plain = EV.deriveOutcome(d);
+    check('evaluator:traceability-summary-present',
+      rec.ok && plain.ok && plain.traceability
+      && plain.traceability.identified === 2
+      && plain.traceability.byOrigin.user === 1 && plain.traceability.byOrigin.security === 1
+      && plain.traceability.implemented === 2
+      && plain.traceability.verified === 0
+      && plain.traceability.sufficient === plain.outcome,
+      `trace=${JSON.stringify(plain.traceability)}`);
+    const fresh = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:traceability-verified-by-fresh',
+      fresh.outcome === 'PASS' && fresh.traceability.verified === 2,
+      `outcome=${fresh.outcome} verified=${fresh.traceability?.verified}`);
+    check('evaluator:legacy-manifests-stay-neutral',
+      !plain.reasons.some((r) => r.code === 'criteria-not-traced-to-task')
+      && !fresh.reasons.some((r) => r.code === 'criteria-not-traced-to-task'),
+      'no origins declared -> neutral');
+  }
+  {
+    const d = contProject('eval-trace-untraced');
+    C.opInitialize(d, { objective: 'untraced run' });
+    EV.recordManifest(d, {
+      criteria: [
+        { id: 'must-impl', requirement: 'MUST', text: 'agent-invented criterion', origin: 'implied' },
+        { id: 'must-plat', requirement: 'MUST', text: 'windows paths ok', origin: 'platform' },
+      ],
+      evidence: [
+        { id: 'ev-impl', verdict: 'PASS', criterionIds: ['must-impl'], exec: nodeExit(0) },
+        { id: 'ev-plat', verdict: 'PASS', criterionIds: ['must-plat'], exec: nodeExit(0) },
+      ],
+    });
+    const outcome = EV.deriveOutcome(d);
+    check('evaluator:criteria-not-traced-caps-NEEDS_REVIEW',
+      outcome.outcome === 'NEEDS_REVIEW'
+      && outcome.reasons.some((r) => r.code === 'criteria-not-traced-to-task'),
+      `outcome=${outcome.outcome}`);
+    const fresh = EV.deriveOutcome(d, { fresh: true });
+    check('evaluator:criteria-not-traced-survives-fresh',
+      fresh.outcome === 'NEEDS_REVIEW'
+      && fresh.reasons.some((r) => r.code === 'criteria-not-traced-to-task')
+      && fresh.reRun.length === 2 && fresh.reRun.every((r) => r.exit === 0),
+      `fresh=${fresh.outcome} (commands green, traceability still caps)`);
+  }
+  {
+    const d = contProject('eval-origin-invalid');
+    C.opInitialize(d, { objective: 'origin validation' });
+    const bad = EV.recordManifest(d, {
+      criteria: [{ id: 'must-bad', requirement: 'MUST', text: 'x', origin: 'vibes' }],
+    });
+    check('evaluator:origin-allowlist-refused',
+      bad.ok === false && bad.errors?.some((e) => e.includes('origin must be one of')),
+      `ok=${bad.ok}`);
+    const noText = EV.recordManifest(d, {
+      criteria: [{ id: 'must-bad2', requirement: 'MUST', text: 'x', sourceText: 42 }],
+    });
+    check('evaluator:source-text-must-be-string',
+      noText.ok === false && noText.errors?.some((e) => e.includes('sourceText must be a non-empty string')),
+      `ok=${noText.ok}`);
+  }
+
   // negative: a FAIL evidence verdict is decisive
   {
     const d = contProject('eval-fail');
