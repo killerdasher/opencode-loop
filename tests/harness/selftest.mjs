@@ -836,6 +836,76 @@ async function main() {
       `reRun verdict=${fresh.reRun[0]?.verdict}`);
   }
 
+  // P12 (Phase 1): a manifest left by a completed run must not silently
+  // absorb the next run's records. record must refuse up front, naming both
+  // tasks and the remedy - not defer the mismatch to deriveOutcome.
+  {
+    const d = contProject('eval-stale-binding');
+    const runA = C.opInitialize(d, { objective: 'first run' });
+    EV.recordManifest(d, {
+      criteria: [{ id: 'must-a', requirement: 'MUST', text: 'run A evidence' }],
+    });
+    C.opTransition(d, 'complete', { stoppingCondition: 'run A complete' });
+    const runB = C.opInitialize(d, { objective: 'second run' });
+    check('evaluator:record-stale-binding-setup',
+      runA.ok && runB.ok && runB.state.taskId !== runA.state.taskId,
+      `runs ${runA.state.taskId}/${runB.state.taskId}`);
+    const refused = EV.recordManifest(d, {
+      criteria: [{ id: 'must-b', requirement: 'MUST', text: 'run B evidence' }],
+    });
+    check('evaluator:record-refuses-stale-run-binding',
+      refused.ok === false
+      && refused.reason.includes(runA.state.taskId)
+      && refused.reason.includes(runB.state.taskId)
+      && refused.reason.includes('back it up and remove'),
+      `ok=${refused.ok} reason=${refused.reason?.slice(0, 80)}`);
+    // the stale manifest is preserved exactly - nothing was written
+    const preserved = JSON.parse(fs.readFileSync(verFile(d), 'utf8'));
+    check('evaluator:record-refusal-preserves-manifest',
+      preserved.taskId === runA.state.taskId
+      && !preserved.criteria.some((c) => c.id === 'must-b'),
+      'refused record leaves the old manifest untouched');
+    // remedy path: back up + remove, then the live task records cleanly
+    fs.renameSync(verFile(d), path.join(d, '.loop', 'verification-superseded.json'));
+    const rebound = EV.recordManifest(d, {
+      criteria: [{ id: 'must-b', requirement: 'MUST', text: 'run B evidence' }],
+    });
+    check('evaluator:record-binds-after-explicit-reset',
+      rebound.ok === true && rebound.manifest.taskId === runB.state.taskId,
+      `bound=${rebound.manifest?.taskId}`);
+  }
+
+  // re-recording against the SAME live task stays allowed (mid-run updates)
+  {
+    const d = contProject('eval-same-task-rerecord');
+    C.opInitialize(d, { objective: 'same-task updates' });
+    const first = EV.recordManifest(d, {
+      criteria: [{ id: 'must-x', requirement: 'MUST', text: 'x' }],
+    });
+    const second = EV.recordManifest(d, {
+      findings: [{ id: 'fn-late', severity: 'LOW', text: 'late finding', resolved: false }],
+    });
+    const merged = JSON.parse(fs.readFileSync(verFile(d), 'utf8'));
+    check('evaluator:record-allows-same-task-update',
+      first.ok && second.ok && merged.taskId === first.manifest.taskId
+      && merged.findings.some((f) => f.id === 'fn-late'),
+      `second ok=${second.ok}`);
+  }
+
+  // standalone usage: a bound manifest with NO live continuity run still records
+  {
+    const d = contProject('eval-standalone-record');
+    const bound = C.opInitialize(d, { objective: 'run that will vanish' });
+    EV.recordManifest(d, { criteria: [{ id: 'must-s', requirement: 'MUST', text: 's' }] });
+    C.opTransition(d, 'complete', { stoppingCondition: 'complete' });
+    const later = EV.recordManifest(d, {
+      findings: [{ id: 'fn-standalone', severity: 'LOW', text: 'after archive', resolved: false }],
+    });
+    check('evaluator:record-allowed-without-live-run',
+      bound.ok && later.ok === true,
+      `later ok=${later.ok}`);
+  }
+
   // negative: a FAIL evidence verdict is decisive
   {
     const d = contProject('eval-fail');

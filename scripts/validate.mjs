@@ -585,6 +585,15 @@ function validateRepo(root) {
       evaluator.includes('deterministic-evidence-not-re-executed')
         ? 'recorded-only evidence capped at NEEDS_REVIEW; PASS derivation demands real re-execution'
         : 'missing deterministic-evidence-not-re-executed gate');
+    // P12: record must refuse a manifest bound to a different run up front
+    // instead of silently mis-binding a new run's evidence.
+    push('evaluator:record-binding-refusal',
+      evaluator.includes('ins.state.taskId !== base.taskId')
+      && evaluator.includes('belongs to a completed or different run')
+      && evaluator.includes('back it up and remove .loop/verification.json'),
+      evaluator.includes('ins.state.taskId !== base.taskId')
+        ? 'record refuses a manifest bound to another run, with the explicit remedy'
+        : 'missing the record-time cross-run binding refusal');
   }
   const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
   push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
@@ -1030,6 +1039,17 @@ function runSelfTest(root) {
         .split("RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED',\n").join('')
         .split('deterministic-evidence-not-re-executed').join('evidence-not-reverified')
         .split('executed.has(e.id)').join('bool'),
+    },
+    {
+      id: 'evaluator record silently accepts another run binding',
+      expect: 'evaluator:record-binding-refusal',
+      file: 'scripts/evaluator.mjs',
+      // Drop the mismatch comparison and the remedy text: record would merge
+      // a foreign-run manifest again and the refusal check must fail.
+      apply: (t) => t
+        .split('ins.state.taskId !== base.taskId').join('false')
+        .split('belongs to a completed or different run').join('belongs to another context')
+        .split('back it up and remove .loop/verification.json').join('consider the binding'),
     },
     {
       id: 'PowerShell installer drops the redirect preflight',

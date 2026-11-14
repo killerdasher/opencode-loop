@@ -15,7 +15,7 @@ rename, the same implementation as the continuity helper), fail-closed:
 | --- | --- |
 | `schemaVersion` | `1` (others refuse) |
 | `tool` | `"loop-evaluator"` |
-| `taskId` | `null` or 16-hex — auto-bound to the live continuity run's task on first record |
+| `taskId` | `null` or 16-hex — auto-bound to the live continuity run's task on first record; a manifest already bound to a **different** task is refused at `record` with the remedy (the manifest belongs to a completed or different run) |
 | `criteria[]` | `{id, requirement: MUST\|SHOULD\|COULD, text, artifact?: project-relative path}` |
 | `evidence[]` | `{id, verdict: PASS\|FAIL\|BLOCKED\|UNVERIFIED, criterionIds[], note?, exec?: {cmd: [argv...], timeout?}}` |
 | `findings[]` | `{id, severity: CRITICAL\|HIGH\|MEDIUM\|LOW\|INFORMATIONAL, text, resolved}` |
@@ -72,7 +72,10 @@ derives `BLOCKED`, not PASS.
 
 ## Integration with Continuity
 
-`record` adopts the live run's `taskId` into the manifest; `outcome` refuses
+`record` adopts the live run's `taskId` into the manifest; a manifest already
+bound to a different (completed or foreign) task is refused **at `record`**
+with the remedy stated in the refusal, not silently merged;
+`outcome` additionally refuses
 a manifest bound to a different task (`cross-run-evidence` → BLOCKED) so
 finished-run evidence cannot authorize a new run, and a planted manifest
 cannot authorize anything. Convergence reporting wires the derived outcome

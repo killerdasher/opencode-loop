@@ -231,6 +231,20 @@ export function recordManifest(projectRoot, patch, { expectedRoot } = {}) {
     };
   }
   const base = read.readStatus === 'absent' ? emptyManifest() : read.raw;
+  // P12 (Phase 1): evidence must bind to the run that produced it. A manifest
+  // left over from a completed or different run must not silently absorb new
+  // records - that mis-binding was only detected later by deriveOutcome
+  // (cross-run-evidence). Refuse up front, fail-closed, with the remedy.
+  if (base.taskId !== null) {
+    const ins = inspectState(projectRoot, { expectedRoot: identityRoot });
+    if (ins.readStatus === 'ok' && ins.identity === 'match' && ins.state?.taskId
+        && ins.state.taskId !== base.taskId) {
+      return {
+        ok: false,
+        reason: `verification manifest is bound to task ${base.taskId} but the live task is ${ins.state.taskId} - the manifest belongs to a completed or different run; back it up and remove .loop/verification.json, then record fresh evidence for the live task`,
+      };
+    }
+  }
   if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
     return { ok: false, reason: 'record patch must be a JSON object' };
   }
