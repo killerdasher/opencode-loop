@@ -120,9 +120,9 @@ Rules for solo execution:
 | Methodology | defined (this document) |
 | Harness implementing the protocol | implemented; free self-test green (`selftest.mjs`) |
 | Runner safety contract (v0.3.1) | implemented; unattended runs require the `--allow-auto` acknowledgement, least-privilege permission config + scrubbed child environment applied identically to both arms (validator-checked, self-tested) |
-| Loop-arm runs | 1 × Case A pilot → `PASS` after adjudication (`evidence/2026-11-02T20-55-27-003Z-caseA-loop/`); pre-dates the v0.3.1 safety contract |
-| Control-arm runs | **0 — no A/B comparison has been executed** |
-| Comparative results | **none. No claim about LOOP vs standard execution is supported yet.** |
+| Loop-arm runs | 2 valid runs — Case A loop (2026-11-15, adjudicated `PASS`) and Case C loop (2026-11-15, adjudicated `PASS`); plus the pre-v0.3.1 Case A pilot (`evidence/2026-11-02T20-55-27-003Z-caseA-loop/`) |
+| Control-arm runs | **2 valid runs** — Case A control (2026-11-15, adjudicated `PASS`) and Case C control (2026-11-15, adjudicated **`FAIL`**: the suite command was never executed by the session and files were modified before the failing suite ran — the passing "suite passes" claim was only verified by the harness's independent re-run) |
+| Comparative results | **Pilot only — no comparative claim.** Operator-authorized Batch 1 complete (Cases A and C, one run per arm, model pinned `opencode/glm-5.3-flash-free`, OpenCode v2.3.0, same machine/day, arms back-to-back per case, `--keep` + adjudication). Observations at N=1 per arm per case: Case A — both arms correct with green harness re-runs; the loop arm additionally produced staged convergence evidence and parked-scope disclosure. Case C — the loop arm reproduced before fixing, executed the suite in-session, and attributed with evidence (all automatic criteria PASS); the control arm fixed first, never ran the suite in-session, and left its passing claim unverified (two automatic FAILs). Failures and FAIL verdicts are reported for both arms with equal prominence per §4; metric aggregation is not derived (N=1). Two excluded `BLOCKED` attempts on 2026-11-14 (`provider.free-limit` HTTP 429 at session start, no model output). Full adjudication: `tests/harness/evidence/ADJUDICATION.md` (local, gitignored evidence dir). |
 
 The absence of comparison runs is a limitation, not a negative result: the
 deliverable of this phase is a protocol that makes such a comparison possible
