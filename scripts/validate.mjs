@@ -27,6 +27,10 @@ const isWindows = process.platform === 'win32';
 
 const REQUIRED_FILES = [
   '.opencode/commands/loop.md',
+  '.opencode/commands/loop-status.md',
+  '.opencode/commands/loop-pause.md',
+  '.opencode/commands/loop-resume.md',
+  '.opencode/commands/loop-cancel.md',
   '.opencode/skills/loop-engine/SKILL.md',
   '.opencode/skills/loop-engine/references/quality-gates.md',
   '.opencode/skills/loop-engine/references/risk-analysis.md',
@@ -34,6 +38,8 @@ const REQUIRED_FILES = [
   'scripts/install.ps1',
   'scripts/install.sh',
   'scripts/validate.mjs',
+  'scripts/continuity.mjs',
+  '.opencode/skills/loop-engine/references/fresh-review.md',
   'tests/evaluation.md',
   'tests/comparison.md',
   'tests/harness/README.md',
@@ -59,6 +65,7 @@ const REQUIRED_SKILL_REFERENCES = [
   'quality-gates.md',
   'risk-analysis.md',
   'evaluation-cases.md',
+  'continuity.md',
 ];
 
 const SECRET_PATTERNS = [
@@ -261,6 +268,40 @@ function validateRepo(root) {
     }
   }
 
+  // -- Continuity lifecycle commands (ADR 0002) -------------------------------
+  // Thin command tier: each must carry valid frontmatter, a description, an
+  // argument placeholder where takeable, route through references/continuity.md,
+  // and report BLOCKED when the helper cannot run. --force must not exist.
+  for (const name of ['loop-status', 'loop-pause', 'loop-resume', 'loop-cancel']) {
+    const p = path.join(root, `.opencode/commands/${name}.md`);
+    const text = readIfExists(p);
+    if (text === null) {
+      push(`continuity-command:${name}:frontmatter`, false, 'file missing');
+      continue;
+    }
+    const fm = parseFrontmatter(text);
+    push(`continuity-command:${name}:frontmatter`, fm.ok, fm.ok ? 'valid' : fm.error);
+    push(`continuity-command:${name}:description`, Boolean(fm.data?.description), fm.data?.description ? 'present' : 'missing description');
+    const takesArgs = true; // every continuity command accepts optional free text (reason/keyword/context)
+    push(
+      `continuity-command:${name}:arguments`,
+      text.includes('$ARGUMENTS'),
+      text.includes('$ARGUMENTS') ? 'literal $ARGUMENTS present' : 'missing $ARGUMENTS placeholder',
+    );
+    const routeToReference = text.includes('references/continuity.md');
+    push(`continuity-command:${name}:continuity-reference`, routeToReference,
+      routeToReference ? 'routes through references/continuity.md' : 'missing continuity reference route');
+    const blockedLanguage = /BLOCKED/.test(text);
+    push(`continuity-command:${name}:blocked-clause`, blockedLanguage,
+      blockedLanguage ? 'BLOCKED degradation path present' : 'missing BLOCKED degradation instructions');
+    // `--force` must not EXIST as an offered override. Explicit sentences like
+    // "There is no --force in this release" are honest limitation statements
+    // and are stripped before the scan; any remaining mention is an offering.
+    const noForce = !/--force/.test(text.replace(/no\s+`?--force`?/gi, ''));
+    push(`continuity-command:${name}:no-force`, noForce,
+      noForce ? 'no override flag' : '--force appears (must not exist in this release)');
+  }
+
   // -- Skill ----------------------------------------------------------------
   const skillPath = path.join(root, '.opencode/skills/loop-engine/SKILL.md');
   const skillText = readIfExists(skillPath);
@@ -364,7 +405,14 @@ function validateRepo(root) {
       ['dry-run support', /DryRun/],
       ['command artifact', /loop\.md/],
       ['skill artifact', /loop-engine/],
+      ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /'project'/],
+      // P9 finding 2: redirected-destination containment preflight
+      ['redirect containment preflight', /Test-DestinationContainment/],
+      ['redirect opt-in flag', /AllowRedirectedDestination/],
+      ['reparse point detection', /ReparsePoint/],
+      // P9 finding 3: ownership-aware uninstall
+      ['ownership flag', /ForceCustomized/],
     ];
     const missing = markers.filter(([, re]) => !re.test(ps1)).map(([label]) => label);
     push('installer:ps1:content', missing.length === 0, missing.length === 0 ? 'all behavior markers present' : `missing: ${missing.join(', ')}`);
@@ -384,10 +432,42 @@ function validateRepo(root) {
       ['dry-run support', /--dry-run/],
       ['command artifact', /loop\.md/],
       ['skill artifact', /loop-engine/],
+      ['continuity helper copy', /continuity\.mjs/],
       ['project scope', /--project/],
+      // P9 finding 2: redirected-destination containment preflight
+      ['redirect containment preflight', /check_containment/],
+      ['redirect opt-in flag', /allow-redirected-destination/],
+      ['symlink detection', /\[ -L /],
+      // P9 finding 3: ownership-aware uninstall
+      ['ownership flag', /force-customized/],
     ];
     const missing = markers.filter(([, re]) => !re.test(sh)).map(([label]) => label);
     push('installer:sh:content', missing.length === 0, missing.length === 0 ? 'all behavior markers present' : `missing: ${missing.join(', ')}`);
+  }
+
+  // -- Continuity helper (ADR 0002) -----------------------------------------
+  // Deterministic helper tier. The file must stay offline (no network calls),
+  // dependency-free (only node: builtins), and must carry the honest status
+  // vocabulary plus the best-effort secret-scan limitation language.
+  const continuity = readIfExists(path.join(root, 'scripts/continuity.mjs'));
+  const pushContinuity = (id, ok, detail = '') => push(`continuity:${id}`, ok, detail);
+  if (continuity === null) {
+    pushContinuity('file-content', false, 'scripts/continuity.mjs missing');
+  } else {
+    const nonBuiltin = [...continuity.matchAll(/^\s*(?:import\s.+?from\s+|const\s.+?=\s*require\()\s*['"]([^'"]+)['"]/gm)]
+      .map((m) => m[1]).filter((spec) => !spec.startsWith('node:') && !spec.startsWith('.'));
+    pushContinuity('zero-dep', nonBuiltin.length === 0,
+      nonBuiltin.length === 0 ? 'all imports are node: builtins or relative' : `non-builtin imports: ${nonBuiltin.join(', ')}`);
+    const networkCalls = /[^.\w\u0170](?:fetch\s*\(|got\s*\(|axios|node-fetch|https?\.request|net\.connect)/.test(continuity);
+    pushContinuity('no-network', !networkCalls, networkCalls ? 'looks like a network call' : 'no network primitives');
+    const vocab = ['ACTIVE', 'PAUSED', 'RECOVERY_REQUIRED', 'BLOCKED', 'COMPLETED', 'CANCELLED',
+      'VALID', 'SUSPECTED_STALE', 'CORRUPT'];
+    const missingVocab = vocab.filter((s) => !continuity.includes(s));
+    pushContinuity('status-vocabulary', missingVocab.length === 0,
+      missingVocab.length === 0 ? 'run + integrity vocabulary present' : `missing: ${missingVocab.join(', ')}`);
+    const honestLimits = /best-effort/i.test(continuity) && /never\s+be\s+described\s+as\s+(complete|proof)/i.test(continuity)
+      && /best-effort, never complete/i.test(continuity);
+    pushContinuity('limits-documented', honestLimits, honestLimits ? 'best-effort limitation language present' : 'secret-scan limitation language missing');
   }
 
   for (const r of syntaxChecks(root)) res.push(r);
@@ -444,6 +524,318 @@ function validateRepo(root) {
 
   const license = readIfExists(path.join(root, 'LICENSE'));
   push('docs:license', license !== null && /MIT/i.test(license), license !== null && /MIT/i.test(license) ? 'MIT license present' : 'LICENSE missing or not MIT');
+
+  // -- Continuity docs accuracy (ADR 0002 §7 must appear verbatim; limits stay
+  // stated, not improved away). Weakly-anchored wording is intentionally
+  // avoided: single-word checks are too easy for prose drift to satisfy.
+  const contDocs = readIfExists(path.join(root, 'docs/continuity.md'));
+  if (contDocs === null) {
+    push('docs:continuity-table', false, 'docs/continuity.md missing');
+    push('docs:continuity-limits', false, 'docs/continuity.md missing');
+  } else {
+    const tableAnchors = [
+      '| Helper | validate schema/transitions/identity; atomically persist; reject secret-shaped values (best-effort) | enforce anything at runtime; list processes; lock files |',
+      '| Future native OpenCode runtime (NOT built) | automatic session re-drive on idle/error events, hard iteration enforcement, provider-limit detection with backoff, mid-turn interruption | — all four named capabilities are explicitly absent in this release |',
+    ];
+    const missingAnchors = tableAnchors.filter((s) => !contDocs.includes(s));
+    push('docs:continuity-table', missingAnchors.length === 0,
+      missingAnchors.length === 0 ? 'ADR 0002 §7 table rows present verbatim' : `missing table anchors: ${missingAnchors.length}`);
+    // Markdown emphasis/bticks are noise for anchor matching on plain phrasing
+    const normalized = contDocs.replace(/`/g, '');
+    const limitAnchors = ['No guaranteed checkpoints', 'No bounded-loss promise', 'No locking', 'No --force'];
+    const missingLimits = limitAnchors.filter((s) => !normalized.includes(s));
+    push('docs:continuity-limits', missingLimits.length === 0,
+      missingLimits.length === 0 ? 'all four stated limitations present' : `missing limitations: ${missingLimits.join(', ')}`);
+  }
+  const readmeContLinks = readIfExists(path.join(root, 'README.md'));
+  push('docs:readme-continuity', readmeContLinks !== null
+    && readmeContLinks.includes('/loop-resume')
+    && readmeContLinks.includes('docs/continuity.md'),
+    readmeContLinks !== null && readmeContLinks.includes('/loop-resume') && readmeContLinks.includes('docs/continuity.md')
+      ? 'README documents the continuity commands and doc'
+      : 'README missing continuity command/doc references');
+
+  // -- Completion evaluator (P4) ---------------------------------------------
+  // A deterministic evidence-based evaluator lives at scripts/evaluator.mjs;
+  // it derives pass/fail-style completion outcomes from a structured evidence
+  // manifest at .loop/verification.json and must never accept a model-written
+  // completion statement as proof.
+  const evaluatorPath = path.join(root, 'scripts/evaluator.mjs');
+  const evaluator = readIfExists(evaluatorPath);
+  if (evaluator === null) {
+    push('evaluator:implementation', false, 'scripts/evaluator.mjs missing');
+    push('evaluator:outcome-vocabulary', false, 'scripts/evaluator.mjs missing');
+    push('evaluator:exit-codes', false, 'scripts/evaluator.mjs missing');
+  } else {
+    push('evaluator:implementation', true, 'scripts/evaluator.mjs present');
+    const outcomeVocab = ['PASS', 'FAIL', 'BLOCKED', 'NEEDS_REVIEW', 'no-criteria-declared', 'must-advisory-only',
+      'deterministic-evidence-not-re-executed'];
+    const missingVocab = outcomeVocab.filter((s) => !evaluator.includes(s));
+    push('evaluator:outcome-vocabulary', missingVocab.length === 0,
+      missingVocab.length === 0 ? 'four-outcome vocabulary + fail-closed reason codes present' : `missing outcome vocabulary: ${missingVocab.join(', ')}`);
+    const exitContract = '0=PASS 1=FAIL 2=BLOCKED 3=NEEDS_REVIEW';
+    push('evaluator:exit-codes', evaluator.includes(exitContract),
+      evaluator.includes(exitContract) ? 'exit-code contract documented in usage' : 'usage missing exit-code contract');
+    // P9 finding 1: a recorded PASS is never proof - default derivation must
+    // carry the not-re-executed reason code and its PASS path must demand
+    // fresh re-execution.
+    push('evaluator:fresh-gate',
+      evaluator.includes('deterministic-evidence-not-re-executed')
+      && evaluator.includes("RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED'")
+      && evaluator.includes('executed.has(e.id)'),
+      evaluator.includes('deterministic-evidence-not-re-executed')
+        ? 'recorded-only evidence capped at NEEDS_REVIEW; PASS derivation demands real re-execution'
+        : 'missing deterministic-evidence-not-re-executed gate');
+    // P12: record must refuse a manifest bound to a different run up front
+    // instead of silently mis-binding a new run's evidence.
+    push('evaluator:record-binding-refusal',
+      evaluator.includes('ins.state.taskId !== base.taskId')
+      && evaluator.includes('belongs to a completed or different run')
+      && evaluator.includes('back it up and remove .loop/verification.json'),
+      evaluator.includes('ins.state.taskId !== base.taskId')
+        ? 'record refuses a manifest bound to another run, with the explicit remedy'
+        : 'missing the record-time cross-run binding refusal');
+    // P12 Phase 2: requirements traceability - origin allowlist, the
+    // no-user-sourced-criteria cap, and the identified/implemented/verified
+    // summary must all exist in the derivation code.
+    push('evaluator:traceability-guard',
+      evaluator.includes('CRITERION_ORIGINS')
+      && evaluator.includes('criteria-not-traced-to-task')
+      && evaluator.includes("c.origin ?? 'unspecified'")
+      && evaluator.includes('verified: coverage.filter'),
+      evaluator.includes('criteria-not-traced-to-task')
+        ? 'criteria carry provenance origins; untraced objectives cap at NEEDS_REVIEW; traceability summary derived'
+        : 'missing the requirements-traceability guard');
+    // P12 Phase 3: the optional fresh-context review must exist, state its
+    // own limits honestly, and be wired from SKILL.md without being mandatory.
+    const freshReview = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/fresh-review.md'));
+    const skillFresh = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
+    push('freshreview:reference',
+      freshReview !== null
+      && freshReview.includes('CONFIRMED | REFUTED | UNCONFIRMED')
+      && freshReview.includes('No runtime enforces')
+      && freshReview.includes('different model does not automatically')
+      && skillFresh !== null && skillFresh.includes('references/fresh-review.md'),
+      freshReview !== null
+        ? 'fresh-review reference defines the reconcilable-findings contract and is offered, never mandatory, from SKILL.md'
+        : 'references/fresh-review.md missing');
+  }
+  const skillTextEval = readIfExists(path.join(root, '.opencode/skills/loop-engine/SKILL.md'));
+  push('evaluator:skill-touchpoint', skillTextEval !== null && skillTextEval.includes('evaluator.mjs') && skillTextEval.includes('NEEDS_REVIEW'),
+    skillTextEval !== null && skillTextEval.includes('evaluator.mjs')
+      ? 'SKILL.md wires the evaluator into convergence reporting (stopping-condition evidence)'
+      : 'SKILL.md missing evaluator touchpoint');
+  const refContinuity = readIfExists(path.join(root, '.opencode/skills/loop-engine/references/continuity.md'));
+  push('evaluator:reference-section', refContinuity !== null && refContinuity.includes('verification.json'),
+    refContinuity !== null && refContinuity.includes('verification.json')
+      ? 'continuity reference documents the evidence manifest'
+      : 'references/continuity.md missing evidence-manifest section');
+  const evalDocs = readIfExists(path.join(root, 'docs/evaluator.md'));
+  push('evaluator:docs-guide', evalDocs !== null && evalDocs.includes('.loop/verification.json') && evalDocs.includes('NEEDS_REVIEW'),
+    evalDocs !== null ? 'docs/evaluator.md documents schema, outcomes, exit codes' : 'docs/evaluator.md missing');
+  // P9 finding 1 doc contract: the PASS row must match the code - PASS is
+  // only derivable from a --fresh invocation.
+  push('evaluator:docs-fresh-pass-row',
+    evalDocs !== null && evalDocs.includes('deterministic-evidence-not-re-executed') && /only derivable|derivable only/.test(evalDocs),
+    evalDocs !== null && evalDocs.includes('deterministic-evidence-not-re-executed')
+      ? 'docs/evaluator.md wording matches the fresh-required PASS contract'
+      : 'docs/evaluator.md missing the not-re-executed NEEDS_REVIEW cap wording');
+  const changelogEval = readIfExists(path.join(root, 'CHANGELOG.md'));
+  push('evaluator:changelog-entry', changelogEval !== null && changelogEval.includes('evaluator.mjs'),
+    changelogEval !== null && changelogEval.includes('evaluator.mjs')
+      ? 'CHANGELOG documents the evaluator'
+      : 'CHANGELOG missing evaluator entry');
+  push('evaluator:nine-stages-intact',
+    skillTextEval !== null && ['STAGE 0', 'STAGE 1', 'STAGE 2', 'STAGE 3', 'STAGE 4', 'STAGE 5',
+      'STAGE 6', 'STAGE 7', 'STAGE 8'].every((s) => skillTextEval.includes(s)),
+    skillTextEval !== null ? 'nine-stage methodology intact in SKILL.md' : 'SKILL.md missing');
+
+  // -- Task profiles (P5) ------------------------------------------------------
+  // Five adaptive engineering methodologies (BUILD/DEBUG/REFACTOR/AUDIT/
+  // MIGRATE), resolved from explicit user intent by scripts/profiles.mjs and
+  // documented as modular references. Profiles tune emphasis only; the nine
+  // stages and hard safety rules apply unchanged to every profile, and the
+  // task scope is never overridden.
+  const SAFEGUARD_ANCHOR = '<!-- Universal safeguards apply unchanged -->';
+  const PROFILE_DIMENSIONS = [
+    '## Required inputs',
+    '## Relevant analysis stages',
+    '## Verification methods',
+    '## Risk priorities',
+    '## Completion criteria',
+    '## Forbidden shortcuts',
+    '## Expected evidence',
+  ];
+  for (const name of ['BUILD', 'DEBUG', 'REFACTOR', 'AUDIT', 'MIGRATE']) {
+    const profilePath = path.join(root, `.opencode/skills/loop-engine/references/profiles/${name.toLowerCase()}.md`);
+    const profileText = readIfExists(profilePath);
+    if (profileText === null) {
+      push(`profiles:${name.toLowerCase()}:reference`, false, `${name}.md missing`);
+      continue;
+    }
+    const missingDims = PROFILE_DIMENSIONS.filter((s) => !profileText.includes(s));
+    push(`profiles:${name.toLowerCase()}:reference`,
+      missingDims.length === 0 && profileText.includes(SAFEGUARD_ANCHOR),
+      missingDims.length === 0 && profileText.includes(SAFEGUARD_ANCHOR)
+        ? `all seven profile dimensions + safeguard anchor present`
+        : `missing: ${missingDims.join(' | ') || 'safeguard anchor'}`);
+  }
+  const resolver = readIfExists(path.join(root, 'scripts/profiles.mjs'));
+  push('profiles:resolver', resolver !== null
+    && resolver.includes('GENERIC_LOOP') && resolver.includes('PROFILES'),
+    (resolver !== null && resolver.includes('GENERIC_LOOP'))
+      ? 'deterministic profile resolver present'
+      : 'scripts/profiles.mjs missing or incomplete');
+  push('profiles:loop-flag', readIfExists(path.join(root, '.opencode/commands/loop.md'))?.includes('--profile') === true
+    && ['build', 'debug', 'refactor', 'audit', 'migrate'].every((n) => readIfExists(path.join(root, '.opencode/commands/loop.md'))?.includes(n)),
+    'loop.md documents the --profile flag with all five profiles');
+  push('profiles:skill-dispatch',
+    skillTextEval !== null && skillTextEval.includes('references/profiles')
+    && skillTextEval.includes('never auto-inferred') && skillTextEval.includes('generic loop'),
+    skillTextEval !== null ? 'SKILL.md dispatches profiles from explicit intent' : 'SKILL.md missing');
+  push('profiles:docs-guide', readIfExists(path.join(root, 'docs/profiles.md')) !== null
+    && readIfExists(path.join(root, 'docs/profiles.md')).includes('explicit intent') === true
+    && readIfExists(path.join(root, 'docs/profiles.md')).includes('hard safety rules') === true,
+    'docs/profiles.md documents selection + universal safeguards');
+  push('profiles:changelog', changelogEval !== null && changelogEval.includes('profiles.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents profiles' : 'CHANGELOG missing profiles entry');
+
+  // -- Model capability evaluation (P6) ----------------------------------------
+  // Evidence-backed model evaluation on identical tasks + controlled envs:
+  // scripts/model-eval.mjs derives profiles ONLY from completed records
+  // carrying limitations, refuses secret-shaped content and unknown fields,
+  // and has no ranking/winner/aggregate keys by construction. No real model
+  // profiles ship here (token-gated: operator-supplied credentials); the
+  // core tests run offline on fixtures with no paid API.
+  const meFile = readIfExists(path.join(root, 'scripts/model-eval.mjs'));
+  const ME_DIMENSIONS = [
+    'instruction-adherence', 'tool-calling', 'coding-correctness',
+    'context-management', 'verification-accuracy', 'security-reasoning',
+    'recovery-behavior', 'completion-evaluator-adherence',
+  ];
+  push('modeleval:framework', meFile !== null
+    && meFile.includes('ME_SCHEMA_VERSION') && meFile.includes('taskSetHash')
+    && meFile.includes('scanForSecrets'),
+    meFile !== null ? 'model-eval framework present with hash-pinned task set + secret scan'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:dimensions-complete', meFile !== null && ME_DIMENSIONS.every((d) => meFile.includes(d)),
+    meFile !== null && ME_DIMENSIONS.every((d) => meFile.includes(d))
+      ? 'all eight capability dimensions named in the framework'
+      : `missing dimensions: ${ME_DIMENSIONS.filter((d) => meFile === null || !meFile.includes(d)).join(', ')}`);
+  push('modeleval:sample-size-honesty', meFile !== null
+    && meFile.includes('MIN_TASKS_PER_DIMENSION') && meFile.includes('INSUFFICIENT_SAMPLE')
+    && meFile.includes('limitations'),
+    meFile !== null ? 'sub-threshold dimensions classified INSUFFICIENT_SAMPLE; completion requires limitations'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:no-ranking', meFile !== null
+    && meFile.includes('no ranking') && meFile.includes('no aggregate')
+    && meFile.includes('observedDifference') && !/rank(?:ed|ing)?\s*:/.test(meFile),
+    meFile !== null ? 'comparisons emit observed counts only - no ranking derivable'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:no-auto-switch-no-credentials', meFile !== null
+    && meFile.includes('never selects or switches providers')
+    && meFile.includes('operator-supplied') && meFile.includes('operator-gated'),
+    meFile !== null ? 'runs are operator-gated; no provider switching, no credential handling'
+      : 'scripts/model-eval.mjs missing');
+  push('modeleval:taskset-pinned', (() => {
+    const t = readIfExists(path.join(root, 'tests/model-eval/taskset.v1.json'));
+    if (t === null) return [false, 'tests/model-eval/taskset.v1.json missing'];
+    let j; try { j = JSON.parse(t); } catch { return [false, 'task set is not valid JSON']; }
+    const ok = j.taskSetVersion === 'v1.0.0' && Array.isArray(j.tasks) && j.tasks.length === 8
+      && ME_DIMENSIONS.every((d) => j.tasks.some((x) => x.dimension === d));
+    return [ok, ok ? 'task set pinned v1.0.0, 8 tasks, all dimensions covered'
+      : 'task set incomplete or unpinned'];
+  })());
+  push('modeleval:docs-guide',
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('Honest scope') === true
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('INSUFFICIENT_SAMPLE') === true
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('operator-supplied credentials') === true,
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+      ? 'docs/model-eval.md documents dimensions, CLI + sample-size honesty'
+      : 'docs/model-eval.md missing');
+  push('modeleval:changelog', changelogEval !== null && changelogEval.includes('model-eval.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents model-eval' : 'CHANGELOG missing model-eval entry');
+  push('modeleval:honest-real-profile-disclosure',
+    readIfExists(path.join(root, 'docs/model-eval.md')) !== null
+    && readIfExists(path.join(root, 'docs/model-eval.md')).includes('zero real')
+    && /paid API/i.test(readIfExists(path.join(root, 'docs/model-eval.md'))),
+    'zero real model profiles disclosed; core tests stay offline/free');
+
+  // -- Controlled self-evolution (P7) ------------------------------------------
+  // Evidence-driven improvement of LOOP's own artifacts: collect sanitized
+  // outcomes -> classify weaknesses -> proposals mapped to recorded failed
+  // cases -> isolated candidate worktrees -> full regression suite on both
+  // sides -> deterministic comparison -> regressions REJECTED -> human-
+  // reviewable report. Never modifies the active skill, never publishes,
+  // never adopts without an explicit approved-by; model claims are never
+  // evidence; LOOP does not learn weights or hold permanent intelligence.
+  const evoFile = readIfExists(path.join(root, 'scripts/evolution.mjs'));
+  push('evolution:framework', evoFile !== null
+    && evoFile.includes('collectOutcome') && evoFile.includes('derivePatterns')
+    && evoFile.includes('verifyCandidate') && evoFile.includes('approveProposal')
+    && evoFile.includes('buildReport') && evoFile.includes("spawnSync('git', ['worktree', 'add', '--detach'"),
+    evoFile !== null ? 'evolution framework present with isolated worktree verification'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:ten-steps', evoFile !== null
+    && ['REJECTED', 'IMPROVED', 'NEUTRAL'].every((v) => evoFile.includes(v))
+    && evoFile.includes('WEAKNESS_CLASSES') && evoFile.includes('mappedEntryIds')
+    && evoFile.includes('acceptanceMetric'),
+    evoFile !== null ? 'verdicts IMPROVED/NEUTRAL/REJECTED + class/targeted cases/acceptance metric present'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:regression-gate', evoFile !== null
+    && evoFile.includes('const verdict = regressions.length > 0 ? \'REJECTED\'')
+    && evoFile.includes("status: 'rejected'")
+    && evoFile.includes('rejected candidates can never be approved'),
+    evoFile !== null ? 'regressions hard-reject; rejected proposals can never be approved'
+      : 'scripts/evolution.mjs missing');
+  // P12 Phase 5: an optional executable acceptance command must gate the
+  // verdict - a candidate that fails its own mapped-weakness check in the
+  // candidate worktree is rejected even when every suite tier improves.
+  push('evolution:acceptance-command', evoFile !== null
+    && evoFile.includes('prop.raw.acceptanceCommand')
+    && evoFile.includes("tier: 'acceptance-command'")
+    && evoFile.includes('the mapped weakness was not addressed')
+    && evoFile.includes('[, "acceptanceCommand"]'),
+    evoFile !== null && evoFile.includes("tier: 'acceptance-command'")
+      ? 'acceptance command runs in both worktrees; candidate exit != 0 rejects the verdict'
+      : 'evolution.mjs missing the executable acceptance-command gate');
+  push('evolution:claims-are-not-evidence', evoFile !== null
+    && evoFile.includes('model-generated claims are never evidence'),
+    evoFile !== null ? 'comparison verdict rests on deterministic counts only'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:approval-mandatory-record-only', evoFile !== null
+    && evoFile.includes('--approved-by NAME (user approval is mandatory before adopting a candidate)')
+    && evoFile.includes('appliedByTool: false')
+    && evoFile.includes('manual, human-reviewable step'),
+    evoFile !== null ? 'adoption is record-only behind an explicit named approver'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:never-touches-active-skill', evoFile !== null
+    && evoFile.includes('.opencode') && evoFile.includes('read-only to this tool') && !evoFile.includes('git push'),
+    evoFile !== null ? 'skill dir refused as data-dir; no publish automation exists'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:history-preserving', evoFile !== null
+    && evoFile.includes('alreadyRecorded') && evoFile.includes('never rewritten'),
+    evoFile !== null ? 're-collect skips; historical records are never rewritten'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:regression-suite-default', evoFile !== null
+    && evoFile.includes('node scripts/validate.mjs --all') && evoFile.includes('node tests/harness/selftest.mjs'),
+    evoFile !== null ? 'default suites are the repository\'s full gates'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:no-learning-claim', evoFile !== null
+    && evoFile.includes('does not learn model weights') && evoFile.includes('permanent autonomous intelligence'),
+    evoFile !== null ? 'honesty note present: no learning, no permanent intelligence'
+      : 'scripts/evolution.mjs missing');
+  push('evolution:docs-guide', (() => {
+    const d = readIfExists(path.join(root, 'docs/evolution.md'));
+    if (d === null) return [false, 'docs/evolution.md missing'];
+    const ok = d.includes('never modifies the active skill')
+      && d.includes('labeled as a claim, not evidence')
+      && d.includes('appliedByTool');
+    return [ok, ok ? 'docs/evolution.md documents the gate + record-only approval' : 'docs/evolution.md incomplete'];
+  })());
+  push('evolution:changelog', changelogEval !== null && changelogEval.includes('evolution.mjs'),
+    changelogEval !== null ? 'CHANGELOG documents evolution' : 'CHANGELOG missing evolution entry');
 
   const evaluation = readIfExists(path.join(root, 'tests/evaluation.md'));
   if (evaluation === null) {
@@ -672,6 +1064,186 @@ function runSelfTest(root) {
       file: 'scripts/install.ps1',
       apply: (t) => t.replace(/-Overwrite/g, '-Replace'),
     },
+    // -- P9 remediation mutations ----------------------------------------------
+    {
+      id: 'evaluator loses the fresh-evidence gate',
+      expect: 'evaluator:fresh-gate',
+      file: 'scripts/evaluator.mjs',
+      // Remove every trace of the finding-1 gate: the reason code, the
+      // recorded-only coverage state, and the executed-set requirement.
+      apply: (t) => t
+        .split("RECORDED_ONLY: 'RECORDED_NOT_REEXECUTED',\n").join('')
+        .split('deterministic-evidence-not-re-executed').join('evidence-not-reverified')
+        .split('executed.has(e.id)').join('bool'),
+    },
+    {
+      id: 'evaluator record silently accepts another run binding',
+      expect: 'evaluator:record-binding-refusal',
+      file: 'scripts/evaluator.mjs',
+      // Drop the mismatch comparison and the remedy text: record would merge
+      // a foreign-run manifest again and the refusal check must fail.
+      apply: (t) => t
+        .split('ins.state.taskId !== base.taskId').join('false')
+        .split('belongs to a completed or different run').join('belongs to another context')
+        .split('back it up and remove .loop/verification.json').join('consider the binding'),
+    },
+    {
+      id: 'evaluator loses requirements traceability',
+      expect: 'evaluator:traceability-guard',
+      file: 'scripts/evaluator.mjs',
+      // Remove the origin allowlist, the not-traced cap, the neutral-origin
+      // default and the verified summary: criteria provenance would no
+      // longer be guarded anywhere.
+      apply: (t) => t
+        .split('criteria-not-traced-to-task').join('criteria-origins-ok')
+        .split("CRITERION_ORIGINS = Object.freeze(['user', 'implied', 'platform', 'security', 'nonfunctional'])").join('CRITERION_ORIGINS = []')
+        .split("c.origin ?? 'unspecified'").join("'unspecified'")
+        .split('verified: coverage.filter').join('verifiedUnused: coverageFilterUnused'),
+    },
+    {
+      id: 'fresh-review reference deleted',
+      expect: 'freshreview:reference',
+      delete: '.opencode/skills/loop-engine/references/fresh-review.md',
+    },
+    {
+      id: 'evolution acceptance command never gates the verdict',
+      expect: 'evolution:acceptance-command',
+      file: 'scripts/evolution.mjs',
+      // Drop the gate: the acceptance result would no longer reject a
+      // candidate whose mapped weakness still fails, and the field would
+      // silently become prose again.
+      apply: (t) => t
+        .split("tier: 'acceptance-command'").join("tier: 'acceptance-info-only'")
+        .split('prop.raw.acceptanceCommand').join('prop.raw.acceptanceMetric')
+        .split('the mapped weakness was not addressed').join('the mapped weakness was considered')
+        .split('[, "acceptanceCommand"]').join('[, "claim2"]'),
+    },
+    {
+      id: 'PowerShell installer drops the redirect preflight',
+      expect: 'installer:ps1:content',
+      file: 'scripts/install.ps1',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('Test-DestinationContainment')
+          && !l.includes('-AllowRedirectedDestination')
+          && !l.includes('ReparsePoint'))
+        .join('\n'),
+    },
+    {
+      id: 'bash installer drops the redirect preflight',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('check_containment')
+          && !l.includes('allow-redirected-destination')
+          && !l.includes('[ -L '))
+        .join('\n'),
+    },
+    {
+      id: 'PowerShell uninstaller loses the ownership gate',
+      expect: 'installer:ps1:content',
+      file: 'scripts/install.ps1',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('ForceCustomized'))
+        .join('\n'),
+    },
+    {
+      id: 'bash uninstaller loses the ownership gate',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('--force-customized')
+          && !l.includes('FORCE_CUSTOMIZED'))
+        .join('\n'),
+    },
+    // -- Continuity (ADR 0002) mutations --------------------------------------
+    {
+      id: 'continuity command loses the argument placeholder',
+      expect: 'continuity-command:loop-pause:arguments',
+      file: '.opencode/commands/loop-pause.md',
+      apply: (t) => t.replace('$ARGUMENTS', 'THE_PAUSE_REASON'),
+    },
+    {
+      id: 'continuity command loses the BLOCKED path',
+      expect: 'continuity-command:loop-resume:blocked-clause',
+      file: '.opencode/commands/loop-resume.md',
+      apply: (t) => t.split('BLOCKED').join('UNAVAILABLE'),
+    },
+    {
+      id: 'continuity command offers an override flag',
+      expect: 'continuity-command:loop-cancel:no-force',
+      file: '.opencode/commands/loop-cancel.md',
+      apply: (t) => `${t}\n\nIf the state diverges, run \`--force cancel --supercede\` to proceed.\n`,
+    },
+    {
+      id: 'continuity helper gains a non-builtin import',
+      expect: 'continuity:zero-dep',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.replace(
+        "import fs from 'node:fs';",
+        "import fs from 'node:fs';\nimport { lockfile } from 'proper-lockfile';",
+      ),
+    },
+    {
+      id: 'continuity helper gains a network primitive',
+      expect: 'continuity:no-network',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.replace(
+        "import path from 'node:path';",
+        "import path from 'node:path';\nasync function probe() { await fetch('https://opencode.example/health'); }",
+      ),
+    },
+    {
+      id: 'continuity helper loses the run-status vocabulary',
+      expect: 'continuity:status-vocabulary',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.split('RECOVERY_REQUIRED').join('NEEDS_REVIEW'),
+    },
+    {
+      id: 'continuity helper loses the secret-scan limitation language',
+      expect: 'continuity:limits-documented',
+      file: 'scripts/continuity.mjs',
+      apply: (t) => t.split('BEST-EFFORT, NEVER COMPLETE').join('COMPLETE PROTECTION GUARANTEED'),
+    },
+    {
+      id: 'installer drops the continuity helper copy',
+      expect: 'installer:sh:content',
+      file: 'scripts/install.sh',
+      // Remove every helper line: the content marker is a repo-file mention,
+      // so removing only the copy step would still leave "continuity.mjs" in
+      // the source-existence check and slip through.
+      apply: (t) => t.split('\n')
+        .filter((l) => !l.includes('SRC_HELPER')
+          && !l.includes('DEST_HELPER')
+          && !l.includes('# Continuity helper'))
+        .join('\n'),
+    },
+    {
+      id: 'continuity reference document deleted',
+      expect: 'reference:continuity.md',
+      delete: '.opencode/skills/loop-engine/references/continuity.md',
+    },
+    {
+      id: 'continuity docs upgrade the helper tier',
+      expect: 'docs:continuity-table',
+      file: 'docs/continuity.md',
+      // Doc drift toward over-claiming: if the Helper row sells runtime
+      // capability, the differentiation check must fire.
+      apply: (t) => t
+        .split('enforce anything at runtime; list processes; lock files')
+        .join('enforce at runtime and lock the state file against concurrent writers'),
+    },
+    {
+      id: 'continuity docs improve promises away',
+      expect: 'docs:continuity-limits',
+      file: 'docs/continuity.md',
+      apply: (t) => t.split('- **No bounded-loss promise.**').join('- ****Bounded-loss guarantee.**'),
+    },
+    {
+      id: 'README drops the continuity commands',
+      expect: 'docs:readme-continuity',
+      file: 'README.md',
+      apply: (t) => t.split('/loop-resume').join('/loop-continue'),
+    },
     // -- 0.3.0 audit findings (F3/F4/F5) + new-file guards --------------------
     {
       id: 'evaluation rubric loses a case (alignment)',
@@ -886,6 +1458,8 @@ function runInstallTests(root) {
 
     const destCommand = path.join(xdg, 'opencode', 'commands', 'loop.md');
     const destSkill = path.join(xdg, 'opencode', 'skills', 'loop-engine', 'SKILL.md');
+    const destHelper = path.join(xdg, 'opencode', 'scripts', 'continuity.mjs');
+    const srcHelper = path.join(root, 'scripts', 'continuity.mjs');
     const scenario = (name, fn) => {
       try {
         fn();
@@ -903,6 +1477,8 @@ function runInstallTests(root) {
       assert(fs.existsSync(destCommand), 'loop.md not installed');
       assert(fs.existsSync(destSkill), 'SKILL.md not installed');
       assert(fs.readFileSync(destCommand, 'utf8') === fs.readFileSync(srcCommand, 'utf8'), 'installed loop.md differs from source');
+      assert(fs.existsSync(destHelper), 'continuity helper not installed');
+      assert(fs.readFileSync(destHelper, 'utf8') === fs.readFileSync(srcHelper, 'utf8'), 'installed continuity helper differs from source');
     });
 
     scenario('idempotent-rerun', () => {
@@ -1020,6 +1596,7 @@ function runInstallTests(root) {
       assert(r.status === 0, `exit ${r.status}: ${r.out}`);
       assert(!fs.existsSync(destCommand), 'loop.md still present after uninstall');
       assert(!fs.existsSync(destSkill), 'skill dir still present after uninstall');
+      assert(!fs.existsSync(destHelper), 'continuity helper still present after uninstall');
       const backupsRoot = path.join(xdg, 'opencode-loop-backups');
       assert(fs.existsSync(backupsRoot), `no uninstall backup root kept: ${backupsRoot}`);
       // The uninstall backup must keep the loop.md content; the discovery
@@ -1038,6 +1615,96 @@ function runInstallTests(root) {
         const leftovers = fs.readdirSync(scanDir).filter((f) => /backup/i.test(f));
         assert(leftovers.length === 0, `backup left inside discovery dir after uninstall: ${leftovers.join(' | ')}`);
       }
+    });
+
+    // -- P9 finding 2: redirected destinations are refused --------------------
+    scenario('redirected-destination-refused', () => {
+      // A link (junction on Windows, symlink elsewhere) at the destRoot entry
+      // must be refused BEFORE anything is written, and the real target must
+      // be named. Zero writes at either path.
+      const red = path.join(baseTmp, `red-${kind}`);
+      const realDir = path.join(red, 'real-opencode');
+      const xdgDir = path.join(red, 'xdg');
+      const junkRoot = path.join(red, 'junk-target');
+      fs.mkdirSync(xdgDir, { recursive: true });
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.mkdirSync(junkRoot, { recursive: true });
+      fs.symlinkSync(junkRoot, path.join(xdgDir, 'opencode'), isWindows ? 'junction' : 'dir');
+      const r = makeRunner(xdgDir)([]);
+      assert(r.status !== 0, `expected refusal, got exit 0: ${r.out}`);
+      assert(/reparse|junction|symlink/i.test(r.out), `refusal must name the redirect: ${r.out}`);
+      assert(!fs.existsSync(path.join(realDir, 'commands', 'loop.md')), 'fallback path received writes despite refusal');
+      assert(fs.readdirSync(junkRoot).length === 0, 'junction/symlink target received writes despite refusal');
+    });
+
+    scenario('redirected-destination-optin', () => {
+      const red = path.join(baseTmp, `opt-${kind}`);
+      const realDir = path.join(red, 'real-opencode');
+      const xdgDir = path.join(red, 'xdg');
+      const junkRoot = path.join(red, 'junk-target');
+      fs.mkdirSync(xdgDir, { recursive: true });
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.mkdirSync(junkRoot, { recursive: true });
+      fs.symlinkSync(junkRoot, path.join(xdgDir, 'opencode'), isWindows ? 'junction' : 'dir');
+      const args = kind === 'ps1'
+        ? ['-AllowRedirectedDestination']
+        : ['--allow-redirected-destination'];
+      const r = makeRunner(xdgDir)(args);
+      assert(r.status === 0, `opt-in install failed: ${r.out}`);
+      assert(fs.existsSync(path.join(junkRoot, 'skills', 'loop-engine', 'SKILL.md')), 'opt-in install did not land at the resolved target');
+      assert(fs.existsSync(path.join(junkRoot, 'commands', 'loop.md')), 'opt-in install missing command at the resolved target');
+    });
+
+    // -- P9 finding 3: ownership-aware uninstall ------------------------------
+    scenario('uninstall-preserves-customized', () => {
+      // A destination where only the user's own command file exists (LOOP was
+      // never installed): the file differs from the sources, so uninstall must
+      // refuse atomically, exit non-zero, keep the user file, and create no
+      // backups.
+      const own = path.join(baseTmp, `own-${kind}`);
+      const ownXdg = path.join(own, 'opencode');
+      fs.mkdirSync(path.join(ownXdg, 'commands'), { recursive: true });
+      fs.writeFileSync(path.join(ownXdg, 'commands', 'loop.md'), '--- description: the users OWN loop command ---');
+      const args = kind === 'ps1' ? ['-Uninstall'] : ['--uninstall'];
+      const r = makeRunner(own)(args);
+      assert(r.status !== 0, `expected refusal for user-owned file, got exit 0: ${r.out}`);
+      assert(/customized|user-owned|differ/i.test(r.out), `refusal must explain the conflict: ${r.out}`);
+      assert(fs.readFileSync(path.join(ownXdg, 'commands', 'loop.md'), 'utf8').includes('users OWN'), 'user-owned file was modified');
+      assert(!fs.existsSync(path.join(own, 'opencode-loop-backups')), 'no backups may be created by a refused uninstall');
+    });
+
+    scenario('uninstall-modified-refused-force-removes', () => {
+      // LOOP-installed then user-modified command: plain uninstall refuses
+      // atomically (ALL targets kept); with the ownership opt-in, everything
+      // is removed and the modified content is kept in a backup.
+      const mod = path.join(baseTmp, `mod-${kind}`);
+      const made = makeRunner(mod)([]);
+      assert(made.status === 0, `fresh install failed: ${made.out}`);
+      const modCommand = makeRunner(mod)([]);
+      assert(modCommand.status === 0, `second install step failed: ${modCommand.out}`);
+      fs.appendFileSync(path.join(mod, 'opencode', 'commands', 'loop.md'), 'user tweak line\n');
+      const refused = makeRunner(mod)(kind === 'ps1' ? ['-Uninstall'] : ['--uninstall']);
+      assert(refused.status !== 0, `expected refusal for modified file, got exit 0: ${refused.out}`);
+      assert(fs.existsSync(path.join(mod, 'opencode', 'commands', 'loop.md')), 'modified file removed without the opt-in');
+      assert(fs.existsSync(path.join(mod, 'opencode', 'skills', 'loop-engine', 'SKILL.md')), 'atomic refusal broken: skill removed alongside a conflict');
+      assert(fs.existsSync(path.join(mod, 'opencode', 'scripts', 'continuity.mjs')), 'atomic refusal broken: helper removed alongside a conflict');
+      const forced = makeRunner(mod)(kind === 'ps1'
+        ? ['-Uninstall', '-ForceCustomized']
+        : ['--uninstall', '--force-customized']);
+      assert(forced.status === 0, `forced uninstall failed: ${forced.out}`);
+      assert(!fs.existsSync(path.join(mod, 'opencode', 'commands', 'loop.md')), 'forced uninstall did not remove the modified file');
+      let foundTweak = false;
+      const backupsRoot = path.join(mod, 'opencode-loop-backups');
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (path.basename(p) === 'loop.md'
+            && fs.readFileSync(p, 'utf8').includes('user tweak line')) { foundTweak = true; return; }
+        }
+      };
+      walk(backupsRoot);
+      assert(foundTweak, 'modified content not preserved in the forced-uninstall backup');
     });
   };
 

@@ -1,6 +1,10 @@
-# LOOP — Iterative Engineering Engine for OpenCode
+<p align="center">
+  <img src="assets/hero-banner.svg" alt="LOOP — Iterative Engineering Engine for OpenCode" width="100%">
+</p>
 
 [![validate](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml/badge.svg)](https://github.com/killerdasher/opencode-loop/actions/workflows/validate.yml) [![release](https://img.shields.io/github/v/release/killerdasher/opencode-loop)](https://github.com/killerdasher/opencode-loop/releases)
+
+<!-- social-preview fallback: assets/loop-logo.svg (square mark) -->
 
 *Iterative engineering workflow for OpenCode • zero dependencies • works with any model • CI-tested on Linux and Windows for every push*
 
@@ -104,6 +108,7 @@ next: full adversarial re-review of the changed module
 /loop --mode deep <task>                  # broader exploration + heavier adversarial review
 /loop --max-iterations 3 <task>           # tighter iteration budget
 /loop --max-iterations 7 --mode deep <task>
+/loop --profile audit <task>              # adaptive methodology (see profiles.md)
 /loop                                     # no task: uses the current conversation as the objective
 ```
 
@@ -111,6 +116,7 @@ next: full adversarial re-review of the changed module
 | --- | --- | --- | --- |
 | `--max-iterations` | 1–10 | 5 | Out-of-range values are clamped; the correction is stated in the Stage 0 summary |
 | `--mode` | `focused`, `balanced`, `deep` | `balanced` | Controls depth of alternative exploration and adversarial review |
+| `--profile` | `build`, `debug`, `refactor`, `audit`, `migrate` | none | Adaptive methodology resolved from explicit user intent only — never auto-inferred; everything except the profile flag is passed to the task verbatim. See [docs/profiles.md](docs/profiles.md) |
 
 Invalid flags never abort the run: LOOP names the correction and continues with defaults.
 
@@ -123,6 +129,19 @@ Mode behavior:
 | `deep` | Broad comparison, including rejected alternatives | Full dimensions + re-review of areas touched repeatedly |
 
 > **Honesty note:** iteration limits and modes are *prompt-level execution guidance*, not a runtime controller. No code counts your iterations — the workflow's integrity depends on the agent tracking and reporting them truthfully. LOOP says the same thing to the agent inside the skill.
+
+### Continuity commands (durable run state)
+
+Runs leave a machine-checked checkpoint in `.loop/continuity.json` (project-local, git-excluded by instruction). Any new session - any model - can pick a dead run up through the same nine-stage loop:
+
+```
+/loop-status                              # read-only: state, integrity, git cross-check
+/loop-pause <reason>                      # pause at an honest stage boundary
+/loop-resume                              # gated restoration (integrity, identity, reconciliation, your explicit approval)
+/loop-cancel <reason>                     # cancel; the run is archived in .loop/archive/, never deleted
+```
+
+Command-level guidance only: no runtime enforces checkpoints, pauses, or resumes, recovery never launches an interrupted `ACTIVE` run automatically, and there is no `--force` in this release. See [docs/continuity.md](docs/continuity.md) and [ADR 0002](docs/adr/0002-loop-continuity.md).
 
 ## Installation
 
@@ -208,7 +227,7 @@ No script required — copy these two paths by hand (the installers live at `scr
 
 ## Configuration
 
-LOOP needs no configuration. The two execution settings (`--max-iterations`, `--mode`) are passed per invocation, and natural language works too — e.g. `/loop spend a couple of iterations hardening this parser` is interpreted against the same mode table.
+LOOP needs no configuration. The execution settings (`--max-iterations`, `--mode`, and the optional explicit `--profile`) are passed per invocation, and natural language works too — e.g. `/loop spend a couple of iterations hardening this parser` is interpreted against the same mode table. Profiles are only selected by the explicit flag, never from natural phrasing.
 
 ## Validating this repository
 
@@ -221,7 +240,7 @@ node scripts/validate.mjs --all        # everything
 node tests/harness/selftest.mjs        # behavioral harness: free checks (no model calls)
 ```
 
-Zero dependencies — Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 190 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
+Zero dependencies - Node.js only. The same checks run in CI on Linux and Windows for every push: **more than 430 automated, model-independent checks** across the validator (structure, defect-injection self-test, installer scenarios) and the free behavioral self-test (see [docs/architecture.md](docs/architecture.md) for the full design).
 
 ### Behavioral evaluation
 
@@ -252,6 +271,7 @@ claimed yet.
 ## Known limitations
 
 - **Prompt-level iteration limits.** Nothing enforces `--max-iterations` at runtime; a misbehaving model could ignore the budget. LOOP mitigates this with explicit iteration banners and honest reporting rules, not hard enforcement.
+- **Continuity is documented, not enforced.** Checkpoint writing, pausing, and resuming are agent-followed procedures with a deterministic validator behind them (`scripts/continuity.mjs`); an interrupted stage may have lost unbounded in-flight work, one live run per project is an operational rule (not a lock), the secret scan is best-effort, and automatic re-drive/limit-detection does not exist. Full boundary: [docs/continuity.md](docs/continuity.md).
 - **Quality depends on the active model and tools.** LOOP structures the work; it cannot add capabilities your model or session lacks. Verification is limited to what the session can actually run (e.g., no cross-platform claims for platforms you didn't test).
 - **No persistent learning.** Each run starts fresh; LOOP does not retain memory between sessions.
 - **No guarantee of perfection.** LOOP aims for evidence-based quality, not the discovery of every possible defect.
@@ -273,20 +293,37 @@ claimed yet.
 ```
 opencode-loop/
 ├── .opencode/
-│   ├── commands/loop.md                 # /loop entry point
+│   ├── commands/
+│   │   ├── loop.md                      # /loop entry point
+│   │   ├── loop-status.md               # continuity: read-only state + git cross-check
+│   │   ├── loop-pause.md                # continuity: pause at a stage boundary
+│   │   ├── loop-resume.md               # continuity: gated restoration
+│   │   └── loop-cancel.md               # continuity: cancel + archive
 │   └── skills/loop-engine/
 │       ├── SKILL.md                     # the workflow engine
 │       └── references/
 │           ├── quality-gates.md         # status vocabulary, gates, report formats
 │           ├── risk-analysis.md         # adversarial review checklists
-│           └── evaluation-cases.md      # in-session behavioral guidance
+│           ├── evaluation-cases.md      # in-session behavioral guidance
+│           ├── continuity.md            # durable-run protocol (ADR 0002)
+│           ├── fresh-review.md          # optional fresh-context review contract
+│           └── profiles/                # adaptive methodologies, explicit intent only
+│               ├── build.md · debug.md · refactor.md
+│               └── audit.md · migrate.md
 ├── scripts/
 │   ├── install.ps1                      # Windows installer
 │   ├── install.sh                       # Linux/macOS installer
-│   └── validate.mjs                     # repository validator (3 modes)
+│   ├── validate.mjs                     # repository validator (3 modes)
+│   ├── continuity.mjs                   # durable-run helper (ADR 0002)
+│   ├── evaluator.mjs                    # completion evaluator (evidence manifest)
+│   ├── profiles.mjs                     # adaptive profile resolver (--profile)
+│   ├── model-eval.mjs                   # model capability evaluation framework
+│   └── evolution.mjs                    # controlled self-evolution framework
 ├── tests/
 │   ├── evaluation.md                    # behavioral evaluation rubric (Cases A–I)
 │   ├── comparison.md                    # A/B comparison methodology (no results claimed)
+│   ├── model-eval/
+│   │   └── taskset.v1.json              # pinned capability task set (version-hashed)
 │   └── harness/                         # semi-automated evaluation harness
 │       ├── README.md                    # usage, exit codes, costs, isolation model
 │       ├── fixtures.mjs                 # isolated fixture repos for Cases A–I
@@ -296,8 +333,9 @@ opencode-loop/
 │       ├── safety.mjs                   # unattended-run safety contract (env allowlist, least privilege)
 │       └── selftest.mjs                 # free self-test (no model calls)
 ├── docs/
-│   ├── architecture.md · design-principles.md
-│   └── adr/0001-runtime-orchestration.md  # skill-only vs plugin vs orchestrator
+│   ├── architecture.md · design-principles.md · continuity.md
+│   ├── evaluator.md · profiles.md · model-eval.md · evolution.md
+│   └── adr/0001-runtime-orchestration.md · adr/0002-loop-continuity.md
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
 ```
@@ -309,9 +347,15 @@ opencode-loop/
 | [docs/architecture.md](docs/architecture.md) | How the command, skill, installers, validator, and evaluation harness fit together — and why |
 | [docs/design-principles.md](docs/design-principles.md) | The ten principles LOOP refuses to violate (evidence, scope, honesty about mechanism) |
 | [docs/adr/0001-runtime-orchestration.md](docs/adr/0001-runtime-orchestration.md) | Why LOOP is prompt-level; what would trigger a plugin/orchestrator layer |
+| [docs/adr/0002-loop-continuity.md](docs/adr/0002-loop-continuity.md) | The LOOP Continuity decision record: durable run state, lifecycle commands, resume gates, and the owner-approved amendments |
+| [docs/continuity.md](docs/continuity.md) | User-facing continuity guide: commands, gates, and the capability boundary (verbatim from ADR 0002) |
 | [tests/evaluation.md](tests/evaluation.md) | The behavioral evaluation rubric: Cases A–I with objective PASS/FAIL/BLOCKED/REVIEW criteria |
 | [tests/comparison.md](tests/comparison.md) | A/B comparison methodology — with the honest *"no results yet"* ledger |
 | [tests/harness/README.md](tests/harness/README.md) | Harness usage, exit codes, costs, and the full isolation model |
+| [docs/evaluator.md](docs/evaluator.md) | The completion evaluator: evidence manifest, outcome derivation, and `--fresh` re-execution |
+| [docs/profiles.md](docs/profiles.md) | Adaptive task profiles: the seven dimensions, explicit-intent selection, and guarded task scope |
+| [docs/model-eval.md](docs/model-eval.md) | Model capability evaluation: task-set pinning, per-dimension counts, honest non-ranking |
+| [docs/evolution.md](docs/evolution.md) | Controlled self-evolution: weakness ledger, worktree-verified proposals, adoption gates |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Contributing
