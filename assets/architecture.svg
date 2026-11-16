@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 560" width="920" height="560" role="img" aria-label="LOOP component architecture">
+  <!-- LOOP visual identity: graphite / violet / cyan -->
+  <defs>
+    <marker id="aarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#5A5A6E"/>
+    </marker>
+  </defs>
+  <rect width="920" height="560" fill="#16161C"/>
+  <text x="54" y="60" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="26" font-weight="600" fill="#FFFFFF">Component architecture</text>
+  <text x="54" y="86" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="15" fill="#8B95A8">Thin commands, one skill holding the methodology, deterministic helpers beside it - all zero-dependency.</text>
+
+  <!-- tier 1: commands -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13.5">
+    <rect x="54" y="112" width="392" height="58" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+    <text x="70" y="136" font-weight="600" fill="#8B5CF6">/loop command</text>
+    <text x="70" y="156" fill="#C9C9D6">argument parsing + settings resolution</text>
+    <rect x="474" y="112" width="392" height="58" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+    <text x="490" y="136" font-weight="600" fill="#8B5CF6">continuity commands</text>
+    <text x="490" y="156" fill="#C9C9D6">loop-status · loop-pause · loop-resume · loop-cancel</text>
+  </g>
+  <path d="M 250 170 L 250 206" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+  <path d="M 670 170 L 670 206" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+
+  <!-- tier 2: skill -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13.5">
+    <rect x="54" y="206" width="812" height="72" rx="10" fill="#1E1E24" stroke="#8B5CF6"/>
+    <text x="70" y="232" font-weight="600" fill="#8B5CF6">loop-engine SKILL.md</text>
+    <text x="70" y="252" fill="#C9C9D6">the nine-stage methodology - the engine, loaded on demand</text>
+    <text x="70" y="270" fill="#8B95A8">references: quality-gates · risk-analysis · evaluation-cases · continuity · fresh-review · profiles/ (build · debug · refactor · audit · migrate)</text>
+  </g>
+  <path d="M 250 278 L 250 314" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+  <path d="M 670 278 L 670 314" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+
+  <!-- tier 3: helpers + state -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13.5">
+    <rect x="54" y="314" width="392" height="106" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+    <text x="70" y="338" font-weight="600" fill="#8B5CF6">deterministic helpers (scripts/)</text>
+    <text x="70" y="358" fill="#C9C9D6">continuity · evaluator · profiles · model-eval · evolution</text>
+    <text x="70" y="378" fill="#8B95A8">fail-closed: refuse or cap, never guess</text>
+    <text x="70" y="398" fill="#8B95A8">optional - the loop runs without them</text>
+    <rect x="474" y="314" width="392" height="106" rx="10" fill="#1E1E24" stroke="#22D3EE"/>
+    <text x="490" y="338" font-weight="600" fill="#22D3EE">durable run state (.loop/, git-excluded)</text>
+    <text x="490" y="358" fill="#C9C9D6">continuity.json · verification.json · archive/</text>
+    <text x="490" y="378" fill="#8B95A8">atomic writes + secret scan + integrity tracking</text>
+    <text x="490" y="398" fill="#8B95A8">survives new sessions, new models, quota death</text>
+  </g>
+  <path d="M 446 367 L 474 367" fill="none" stroke="#22D3EE" stroke-width="1.6" marker-end="url(#aarr)"/>
+
+  <!-- tier 4: verification + CI -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13.5">
+    <rect x="54" y="448" width="392" height="72" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+    <text x="70" y="472" font-weight="600" fill="#8B5CF6">repository validation</text>
+    <text x="70" y="492" fill="#C9C9D6">validate.mjs (structure, self-test, installers)</text>
+    <text x="70" y="510" fill="#8B95A8">tests/harness/selftest.mjs (behavioral, free)</text>
+    <rect x="474" y="448" width="392" height="72" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+    <text x="490" y="472" font-weight="600" fill="#22D3EE">CI - every push, Linux + Windows</text>
+    <text x="490" y="492" fill="#C9C9D6">250 model-independent checks</text>
+    <text x="490" y="510" fill="#8B95A8">model sessions never run in CI</text>
+  </g>
+  <path d="M 250 420 L 250 448" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+  <path d="M 670 420 L 670 448" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+  <path d="M 446 484 L 474 484" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#aarr)"/>
+</svg>

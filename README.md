@@ -11,7 +11,7 @@
 **LOOP** is a goal-driven iterative workflow for [OpenCode](https://opencode.ai). It gives your agent a disciplined engineering loop — analyze, inspect, plan, implement, **verify**, adversarially review, improve — and keeps it going until the result is genuinely done, with evidence instead of optimism.
 
 ```
-/loop Build a full-stack application with authentication and testing.
+/loop Fix the failing test in src/parser.test.mjs and verify the whole suite passes.
 ```
 
 LOOP is a command (`.opencode/commands/loop.md`) plus a skill (`.opencode/skills/loop-engine/SKILL.md`). It runs entirely inside your existing OpenCode session: no framework, no API key, no special model, no external service.
@@ -40,13 +40,17 @@ cd opencode-loop
 
 > PowerShell refusing to run scripts (default `Restricted` policy on many machines)? One-shot instead: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
 
-**2. Run a real task** in any OpenCode session — one with a checkable outcome:
+**2. Run a real task** in any OpenCode session — one with a checkable outcome. Start small and verifiable:
 
 ```
-/loop Find and fix the root cause of the slow test in this project. Verify by running the suite.
+/loop Fix the off-by-one error in parseRange() so the last element is included, and add a regression test.
 ```
 
 **3. Watch the workflow happen:** objective → project reconnaissance → plan → implementation increments → **verification of actual behavior** → adversarial review → an honest convergence report (what is done, how it is known, what remains). For bigger bets, add `--mode deep`; for a quick pass, `--max-iterations 2`.
+
+<p align="center">
+  <img src="assets/workflow.svg" alt="The nine-stage iteration cycle: stages 0-6 on iteration 1; stage 7 fixes by severity then re-verifies; stage 8 converges after every iteration" width="92%">
+</p>
 
 LOOP works with whatever model OpenCode already uses — it adds process discipline and evidence standards, not a runtime. Project scope, `--dry-run`, upgrade/uninstall, and what installation touches: [Installation](#installation).
 
@@ -213,6 +217,18 @@ No script required — copy these two paths by hand (the installers live at `scr
 
 ## Example usage
 
+### Small, verifiable tasks first
+
+```
+/loop Fix the off-by-one error in parseRange() so the last element is included, and add a regression test.
+```
+
+```
+/loop Find and fix the root cause of the slow test in this project. Verify by running the suite.
+```
+
+### Larger and advanced examples
+
 ```
 /loop Build a full-stack application with authentication and testing.
 ```
@@ -336,6 +352,11 @@ opencode-loop/
 │   ├── architecture.md · design-principles.md · continuity.md
 │   ├── evaluator.md · profiles.md · model-eval.md · evolution.md
 │   └── adr/0001-runtime-orchestration.md · adr/0002-loop-continuity.md
+├── assets/
+│   ├── hero-banner.svg                  # README hero (graphite/violet/cyan identity)
+│   ├── loop-logo.svg                    # square mark (social-preview fallback)
+│   ├── workflow.svg                     # nine-stage iteration cycle diagram
+│   └── architecture.svg                 # component architecture diagram
 ├── .github/workflows/validate.yml       # CI on Linux + Windows
 ├── README.md · CONTRIBUTING.md · SECURITY.md · CHANGELOG.md · LICENSE
 ```

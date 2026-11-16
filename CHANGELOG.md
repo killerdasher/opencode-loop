@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Visual identity diagrams** (`assets/workflow.svg`, `assets/architecture.svg`): the nine-stage iteration cycle (accurately representing the implemented iteration model — stages 0–6 on iteration 1, stage 7 fix-by-severity with re-verification, stage 8 after every iteration) and the component architecture (thin commands → skill → deterministic helpers → durable `.loop/` state → CI), both hand-authored SVG in the graphite/violet/cyan identity. README: the first usage example is now a small, verifiable task (per the product-presentation directive), with large/advanced examples moved to their own subsection; the workflow diagram sits after the quick-start and the tree documents the assets.
+- **Model-aware execution investigation** (`docs/model-eval.md`): recorded conclusion — LOOP is prompt-level (ADR 0001) and has no supported way to select or switch models; the capability is advisory-only operator guidance today (pick the model before the run; cross-model continuation goes through the continuity checkpoint; capability claims belong in real model-eval records). Automatic routing stays behind ADR 0001's documented revisit triggers.
+- **Specialization-ecosystem investigation** (`docs/architecture.md`): domain skills (QA, security, database, API, DevOps, data, geospatial) are recorded as independent OpenCode skills, never automatic additions to LOOP Core — with the concrete integration contract a specialization must meet (explicit user intent, no weakened evidence rules, validator-pinned reference + behavioral checks). Nothing scheduled; the bar is the roadmap, not a promise.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added

@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 430" width="920" height="430" role="img" aria-label="LOOP nine-stage iteration cycle">
+  <!-- LOOP visual identity: graphite / violet / cyan -->
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#5A5A6E"/>
+    </marker>
+    <marker id="arrCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#22D3EE"/>
+    </marker>
+    <marker id="arrViolet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#8B5CF6"/>
+    </marker>
+  </defs>
+  <rect width="920" height="430" fill="#16161C"/>
+  <text x="54" y="66" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="26" font-weight="600" fill="#FFFFFF">The nine-stage iteration cycle</text>
+  <text x="54" y="92" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="15" fill="#8B95A8">Iteration 1 runs stages 0-6; later iterations start at stage 7 with one specific objective; stage 8 runs after every iteration.</text>
+
+  <!-- top row: stages 0-6 -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="14">
+    <g>
+      <rect x="54" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+      <text x="106" y="144" text-anchor="middle" font-weight="600" fill="#8B5CF6">Stage 0</text>
+      <text x="106" y="163" text-anchor="middle" fill="#C9C9D6">Objective</text>
+    </g>
+    <line x1="158" y1="148" x2="172" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="172" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+      <text x="224" y="144" text-anchor="middle" font-weight="600" fill="#8B5CF6">Stage 1</text>
+      <text x="224" y="163" text-anchor="middle" fill="#C9C9D6">Recon</text>
+    </g>
+    <line x1="276" y1="148" x2="290" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="290" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+      <text x="342" y="144" text-anchor="middle" font-weight="600" fill="#8B5CF6">Stage 2</text>
+      <text x="342" y="163" text-anchor="middle" fill="#C9C9D6">Approaches</text>
+    </g>
+    <line x1="394" y1="148" x2="408" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="408" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+      <text x="460" y="144" text-anchor="middle" font-weight="600" fill="#8B5CF6">Stage 3</text>
+      <text x="460" y="163" text-anchor="middle" fill="#C9C9D6">Plan</text>
+    </g>
+    <line x1="512" y1="148" x2="526" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="526" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#2E2E3A"/>
+      <text x="578" y="144" text-anchor="middle" font-weight="600" fill="#8B5CF6">Stage 4</text>
+      <text x="578" y="163" text-anchor="middle" fill="#C9C9D6">Implement</text>
+    </g>
+    <line x1="630" y1="148" x2="644" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="644" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#22D3EE"/>
+      <text x="696" y="144" text-anchor="middle" font-weight="600" fill="#22D3EE">Stage 5</text>
+      <text x="696" y="163" text-anchor="middle" fill="#C9C9D6">Verify</text>
+    </g>
+    <line x1="748" y1="148" x2="762" y2="148" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+    <g>
+      <rect x="762" y="120" width="104" height="56" rx="10" fill="#1E1E24" stroke="#22D3EE"/>
+      <text x="814" y="144" text-anchor="middle" font-weight="600" fill="#22D3EE">Stage 6</text>
+      <text x="814" y="163" text-anchor="middle" fill="#C9C9D6">Review</text>
+    </g>
+  </g>
+
+  <!-- adversarial loop: 6 -> 7 -> 5 (fix what matters, then re-verify) -->
+  <path d="M 814 176 C 814 236 300 236 232 180" fill="none" stroke="#8B5CF6" stroke-width="1.8" marker-end="url(#arrViolet)" stroke-dasharray="5 4"/>
+  <text x="520" y="228" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" fill="#8B5CF6">stage 7 - fix by severity, then re-run stages 5-6</text>
+
+  <!-- stage 8: convergence -->
+  <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="14">
+    <rect x="380" y="270" width="160" height="56" rx="10" fill="#1E1E24" stroke="#22D3EE"/>
+    <text x="460" y="294" text-anchor="middle" font-weight="600" fill="#22D3EE">Stage 8</text>
+    <text x="460" y="313" text-anchor="middle" fill="#C9C9D6">Converge</text>
+  </g>
+  <path d="M 460 176 L 460 270" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- next iteration loop back to stage 7 objective -->
+  <path d="M 540 298 H 640 C 664 298 664 292 664 268 V 156 L 644 148" fill="none" stroke="#22D3EE" stroke-width="1.8" marker-end="url(#arrCyan)" stroke-dasharray="5 4"/>
+  <text x="700" y="252" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" fill="#22D3EE">next iteration:</text>
+  <text x="700" y="270" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" fill="#22D3EE">one specific objective</text>
+
+  <!-- honest stop -->
+  <path d="M 380 298 H 220" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="212" y="302" text-anchor="end" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" fill="#8B95A8">stop honestly:</text>
+  <text x="212" y="320" text-anchor="end" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" fill="#8B95A8">named condition, or budget exhausted</text>
+
+  <!-- evidence anchor -->
+  <rect x="54" y="368" width="812" height="34" rx="8" fill="#1E1E24" stroke="#2E2E3A"/>
+  <circle cx="76" cy="385" r="5" fill="#22D3EE"/>
+  <text x="94" y="390" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13.5" fill="#C9C9D6">Every claim of done traces to a command that ran, a test that passed, or an artifact that exists - fabricated success is a hard failure.</text>
+</svg>

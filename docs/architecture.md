@@ -2,6 +2,10 @@
 
 How the pieces of `opencode-loop` fit together, and why they are shaped this way.
 
+<p align="center">
+  <img src="../assets/architecture.svg" alt="LOOP component architecture: thin commands, one skill holding the methodology, five deterministic helpers beside it, durable run state in .loop/, and CI running 250 model-independent checks on every push" width="92%">
+</p>
+
 ## Components
 
 ```
@@ -122,6 +126,22 @@ Five zero-dependency Node scripts sit beside the workflow and the harness. None 
 | `evolution.mjs` | append-only sanitized ledger + proposal verdict records | regression or failing acceptance command = permanent refuse; adoption = evidence + named approver, `appliedByTool: false` forever |
 
 The same helpers are cross-checked: the evaluator binds to the live continuity run's `taskId` and refuses cross-run or planted manifests; evolution consumes continuity archives and evaluator manifests as its only evidence sources; and the validator pins the contract each helper documents in its user guide (`docs/evaluator.md`, `docs/profiles.md`, `docs/model-eval.md`, `docs/evolution.md`).
+
+## Future specialization modules (investigation status)
+
+Domain skills — testing/QA, application security, database engineering, API
+engineering, DevOps/SRE, data engineering, geospatial — were investigated as
+a possible ecosystem (P13 master directive, Part X). The recorded position:
+**independent OpenCode skills, never automatic additions to LOOP Core.** LOOP
+stays the general engineering methodology; a specialization earns integration
+only when it represents a genuinely different engineering procedure with its
+own tools, verification methods, and acceptance criteria — the same bar the
+five shipped profiles met (each defines all seven dimensions; none merely
+renames the generic workflow). The concrete integration contract that would
+make a specialization trustworthy: it composes with `/loop` by explicit user
+intent (like `--profile`), it never weakens Stage 5/8 evidence rules, and it
+ships with its own validator-pinned reference and behavioral checks. Nothing
+in this direction is scheduled; the bar above is the roadmap, not a promise.
 
 ## Compatibility
 

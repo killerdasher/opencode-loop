@@ -118,3 +118,32 @@ verify that a recorded `PASS` reflects reality — that is the operator's
 evidence discipline (re-inspectable artifact per task). Small sample
 sizes are disclosed, never smoothed over: `INSUFFICIENT_SAMPLE` and the
 `limitations` field exist so nothing passes as more evidenced than it is.
+
+## Model-aware execution (investigation status)
+
+Investigated as a potential capability (P13 master directive, Part VII): can
+LOOP make better use of different model capabilities — reasoning models for
+architectural work, faster models for bounded edits, long-context models for
+large repositories, vision-capable models only when visual evidence matters?
+
+**Conclusion: advisory only; no mechanism exists in LOOP today, and none is
+claimed.** LOOP is a prompt-level methodology (ADR 0001): it executes inside
+whichever model session the operator already started and has no supported way
+to select, switch, or route models mid-run. OpenCode's model choice is the
+operator's session decision, made before the run starts.
+
+What is honest to advise today (operator guidance, not a LOOP feature):
+
+- Start a run with a model appropriate to the task — a stronger reasoning
+  model for architecture-heavy work, a faster model for small bounded fixes.
+- Do not switch models mid-run expecting a continuous result: the
+  continuation session takes over through the continuity checkpoint (a
+  plain-file handoff, verified by `/loop-resume` gates), which is the one
+  supported cross-model path.
+- Model-capability claims belong in `scripts/model-eval.mjs` records backed
+  by real evaluations — never inferred from model names or marketing
+  material (zero profiles ship; see "Honest scope" above).
+
+Automatic model routing would require the runtime/plugin layer that ADR 0001
+deliberately deferred; its documented revisit triggers, not feature
+enthusiasm, decide when that option reopens.
