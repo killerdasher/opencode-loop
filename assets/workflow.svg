@@ -71,6 +71,7 @@
     <text x="460" y="313" text-anchor="middle" fill="#C9C9D6">Converge</text>
   </g>
   <path d="M 460 176 L 460 270" fill="none" stroke="#5A5A6E" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="470" y="230" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12.5" fill="#8B95A8">no in-scope findings</text>
 
   <!-- next iteration loop back to stage 7 objective -->
   <path d="M 540 298 H 640 C 664 298 664 292 664 268 V 156 L 644 148" fill="none" stroke="#22D3EE" stroke-width="1.8" marker-end="url(#arrCyan)" stroke-dasharray="5 4"/>
