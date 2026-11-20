@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-20
+
 ### Fixed
 
 - **Continuity lifecycle integrity (`scripts/continuity.mjs`)**: a generic `update --patch-json` could previously set lifecycle fields directly — `status` (faking a terminal state with no archive, or resurrecting a paused/blocked run without its transition), `integrity` (masking a `SUSPECTED_STALE` file back to `VALID` with no reconciliation), `stopReason`, and `stoppingCondition` — bypassing the validated transition table. Lifecycle fields are now transition-managed only (`LIFECYCLE_FIELDS`): `update` refuses them with an explicit reason instead of silently dropping them, and `opUpdate` gains the same mutation gates as `opTransition` (identity-mismatch refusal, and refusal to mutate a `SUSPECTED_STALE` state — reconciliation is read-only first). Integrity marking itself moved into the lifecycle: `recovery-flag` sets file-level `integrity: SUSPECTED_STALE` and `resolve-recovery` restores `VALID`, so integrity is never update-writable. Three new behavioral regressions pin this: a lifecycle-field bypass refusal (whose assertion also covers a stale-state mask-back attempt leaving the file unchanged), a terminal-status fake refusal, and an identity-mismatch refusal.
