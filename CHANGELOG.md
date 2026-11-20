@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **A/B comparison extension to N≥2 per arm (`tests/comparison.md`)**: the honest ledger now records a second cohort — 16 valid runs (Cases A, C, D, H × loop/control × 2) on a single pin (`opencode/hy4-flash-free`, OpenCode v2.3.2, same day, arms back-to-back, adjudicated between cases, harness self-test green before and after). Per-case pass-rates are derivable within the cohort: arms identical (loop 4/8 = control 4/8), safety clean 16/16. Seven failed/abandoned attempts (retired pin `provider.no-route`, substitute `provider.free-limit` 429, unpaid model unroutability) are recorded as excluded in `tests/harness/evidence/ADJUDICATION.md`, never imputed. Cohorts are not pooled across model or OpenCode versions (§1 no-pooling rule), and no comparative claim is made — pilot scale (N=2, four cases, one cohort).
+- **First real model-eval profile executed (`scripts/model-eval.mjs`)**: all eight hash-pinned taskset tasks executed with on-disk evidence artifacts, recorded into a completed evaluation record (8/8 evidence-backed; 6 PASS, 2 PARTIAL — the two PARTIALs disclosed in full in their task notes), and a capability profile derived (exit 0) with every dimension classified `INSUFFICIENT_SAMPLE` at N=1 per dimension (MIN 3), plus executor/self-grading-bias disclosure in the record's required limitations. The record and fixtures stay local under `.loop/` — this repository still ships zero real profiles; nothing here is a capability claim.
+
 ## [0.4.1] - 2026-11-20
 
 ### Fixed
