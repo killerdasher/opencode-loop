@@ -136,7 +136,7 @@ Mode behavior:
 
 ### Continuity commands (durable run state)
 
-Runs leave a machine-checked checkpoint in `.loop/continuity.json` (project-local, git-excluded by instruction). Any new session - any model - can pick a dead run up through the same nine-stage loop:
+Runs leave a machine-checked checkpoint in `.loop/continuity.json` (project-local; `init` locally git-excludes `.loop/` via `.git/info/exclude` in git projects - the shared `.gitignore` is never touched). Any new session - any model - can pick a dead run up through the same nine-stage loop:
 
 ```
 /loop-status                              # read-only: state, integrity, git cross-check

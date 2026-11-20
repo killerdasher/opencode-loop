@@ -506,6 +506,28 @@ async function main() {
       again.ok ? 'accepted (!)' : again.reason);
   }
 
+  // init locally git-excludes `.loop/` via .git/info/exclude (remediation
+  // pass): never the shared .gitignore, best-effort on non-git projects,
+  // reported in the result, and idempotent
+  {
+    const d = contProject('gitexclude');
+    fs.mkdirSync(path.join(d, '.git', 'info'), { recursive: true }); // simulate a git work tree's metadata dir
+    const r = C.opInitialize(d, { objective: 'local exclusion subject' });
+    const excludePath = path.join(d, '.git', 'info', 'exclude');
+    const excluded = fs.existsSync(excludePath)
+      && fs.readFileSync(excludePath, 'utf8').split(/\r?\n/).map((l) => l.trim()).includes('/.loop/');
+    const idem = C.ensureLoopGitExclusion(d);
+    const entries = fs.readFileSync(excludePath, 'utf8').split(/\r?\n/).filter((l) => l.trim() === '/.loop/').length;
+    const plain = contProject('gitexclude-plain');
+    const r2 = C.opInitialize(plain, { objective: 'no git here' });
+    const sharedUntouched = !fs.existsSync(path.join(d, '.gitignore'));
+    check('continuity:init-locally-excludes-loop-dir',
+      r.ok && r.gitExclude && r.gitExclude.done === true && excluded
+      && idem.done === false && idem.reason === 'already excluded' && entries === 1
+      && r2.ok && sharedUntouched,
+      `excluded=${excluded}, idempotent=${entries === 1}, plainInitOk=${r2.ok}, gitignoreCreated=${!sharedUntouched}`);
+  }
+
   // runtime pause/resume through the real transition path bumps generation
   {
     const d = contProject('rt');
@@ -615,20 +637,67 @@ async function main() {
     check('continuity:invalid-transitions-error', bad.length === 0, bad.length ? JSON.stringify(bad) : 'all invalid pairs rejected');
   }
 
-  // integrity dimension is data the commands manage; the helper must accept
-  // the documented values and refuse the undocumented ones
+  // integrity is lifecycle-managed, not update-managed (remediation pass):
+  // recovery-flag marks the FILE suspect; resolve-recovery clears it; a
+  // generic update can neither set it nor mask it back to VALID
   {
     const d = contProject('stale');
     C.opInitialize(d, { objective: 'stale-integrity subject' });
-    const marked = C.opUpdate(d, { integrity: 'SUSPECTED_STALE' });
+    const flagged = C.opTransition(d, 'recovery-flag', { reason: 'uncommitted work beyond checkpoint' });
     const inspect = C.inspectState(d, { expectedRoot: d });
     check('continuity:stale-integrity-persisted',
-      marked.ok && inspect.state.integrity === 'SUSPECTED_STALE',
-      `integrity=${inspect.state.integrity}`);
+      flagged.ok && inspect.state.integrity === 'SUSPECTED_STALE'
+      && inspect.state.status === 'RECOVERY_REQUIRED',
+      `integrity=${inspect.state.integrity}, status=${inspect.state.status}`);
     const bogus = C.validateStateObject({ ...inspect.state, integrity: 'NOT_SO_BAD' });
     check('continuity:undocumented-integrity-rejected',
       bogus.ok === false && bogus.errors.some((e) => e.includes('integrity')),
       JSON.stringify(bogus.errors.slice(0, 2)));
+    // the bypass regression: a generic update carrying lifecycle fields
+    // (status flip + integrity mask-back) must be refused, state unchanged
+    const bypass = C.opUpdate(d, { integrity: 'VALID', status: 'ACTIVE', stopReason: 'nope' });
+    const after = C.inspectState(d, { expectedRoot: d });
+    check('continuity:update-cannot-bypass-lifecycle',
+      bypass.ok === false && bypass.reason.includes('transition-managed')
+      && after.state.integrity === 'SUSPECTED_STALE'
+      && after.state.status === 'RECOVERY_REQUIRED'
+      && after.state.stopReason === null,
+      bypass.ok ? 'accepted (!)' : bypass.reason);
+    // ...and on a clean ACTIVE state too (the stale refusal is not the only guard)
+    const d2 = contProject('lifecycle-clean');
+    C.opInitialize(d2, { objective: 'clean lifecycle subject' });
+    const fake = C.opUpdate(d2, { status: 'COMPLETED', stoppingCondition: 'unearned' });
+    const d2After = C.inspectState(d2, { expectedRoot: d2 });
+    check('continuity:update-cannot-fake-terminal-status',
+      fake.ok === false && d2After.state.status === 'ACTIVE'
+      && d2After.state.stoppingCondition === null
+      && fs.existsSync(liveFile(d2)) === true,
+      fake.ok ? 'accepted (!)' : fake.reason);
+    // opUpdate now shares opTransition's identity gate: a state that belongs
+    // to a different project is never mutated
+    const dM = contProject('identity');
+    C.opInitialize(dM, { objective: 'identity subject' });
+    const stranger = C.opUpdate(dM, { stage: 4 }, { expectedRoot: path.join(os.tmpdir(), 'not-this-project') });
+    const dMAfter = C.inspectState(dM, { expectedRoot: dM });
+    check('continuity:update-refuses-identity-mismatch',
+      stranger.ok === false && stranger.reason.includes('identity mismatch')
+      && dMAfter.state.stage === 0,
+      stranger.ok ? 'accepted (!)' : stranger.reason);
+    // malformed patches are refused with a usage error, never a crash or a
+    // silent no-op rewrite (fresh-review finding F4): null, string, array,
+    // empty object - the state bytes and generation stay untouched
+    const dP = contProject('badpatch');
+    C.opInitialize(dP, { objective: 'malformed patch subject' });
+    const genBefore = C.inspectState(dP, { expectedRoot: dP }).state.generation;
+    const bytesBefore = fs.readFileSync(liveFile(dP), 'utf8');
+    const badPatches = [null, 'not-an-object', [1, 2], {}];
+    const badResults = badPatches.map((p) => C.opUpdate(dP, p));
+    const bytesAfter = fs.readFileSync(liveFile(dP), 'utf8');
+    const genAfter = C.inspectState(dP, { expectedRoot: dP }).state.generation;
+    check('continuity:update-refuses-malformed-patches',
+      badResults.every((r) => r.ok === false && typeof r.reason === 'string')
+      && bytesAfter === bytesBefore && genAfter === genBefore,
+      badResults.map((r) => (r.ok ? 'accepted(!)' : 'refused')).join(',') + `, bytesUnchanged=${bytesAfter === bytesBefore}`);
   }
 
   // task identity is an enforced derivation invariant (P1 gap closed fresh:
@@ -714,11 +783,13 @@ async function main() {
     check('continuity:clean-objective-passes-scan',
       sOk.ok === true && fs.existsSync(liveFile(dOk)), `status ok=${sOk.ok}`);
     // a state file that was VALID will refuse an update carrying a secret
-    const poisoned = C.opUpdate(dOk, { stopReason: `reminder: use key ${fakeAnt}` });
+    // (settings is an updateable operator field; lifecycle fields never reach
+    // the writer at all since the remediation pass)
+    const poisoned = C.opUpdate(dOk, { settings: `reminder: use key ${fakeAnt}` });
     const intact = JSON.parse(fs.readFileSync(liveFile(dOk), 'utf8'));
     check('continuity:update-refuses-secret-patch',
-      poisoned.ok === false && poisoned.blocked === true && intact.status === 'ACTIVE' && intact.stopReason === null,
-      intact.stopReason === null ? 'state unchanged' : JSON.stringify(intact.stopReason));
+      poisoned.ok === false && poisoned.blocked === true && intact.status === 'ACTIVE' && intact.settings === null,
+      intact.settings === null ? 'state unchanged' : JSON.stringify(intact.settings));
   }
 
   // atomic writes: success leaves no temps; interrupted temps are reported

@@ -39,7 +39,7 @@
     <text x="70" y="378" fill="#8B95A8">fail-closed: refuse or cap, never guess</text>
     <text x="70" y="398" fill="#8B95A8">optional - the loop runs without them</text>
     <rect x="474" y="314" width="392" height="106" rx="10" fill="#1E1E24" stroke="#22D3EE"/>
-    <text x="490" y="338" font-weight="600" fill="#22D3EE">durable run state (.loop/, git-excluded)</text>
+    <text x="490" y="338" font-weight="600" fill="#22D3EE">durable run state (.loop/, local git exclusion)</text>
     <text x="490" y="358" fill="#C9C9D6">continuity.json · verification.json · archive/</text>
     <text x="490" y="378" fill="#8B95A8">atomic writes + secret scan + integrity tracking</text>
     <text x="490" y="398" fill="#8B95A8">survives new sessions, new models, quota death</text>

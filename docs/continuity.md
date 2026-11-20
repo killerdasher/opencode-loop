@@ -74,9 +74,11 @@ hold unrecorded work.
 
 ## Privacy
 
-- `.loop/` is local to your project and stays out of Git by instruction -
-  LOOP never edits your shared `.gitignore` silently; the skill announces a
-  missing ignore entry and shows the line.
+- `.loop/` is local to your project and stays out of Git deterministically:
+  helper `init` appends an anchored `/.loop/` entry to your local
+  `.git/info/exclude` - a per-clone file that is never committed or pushed,
+  so the shared `.gitignore` is never modified. Non-git projects simply skip
+  this step, and the init result reports what happened.
 - State content is an allowlist: objective text, requirement labels,
   stage/iteration metadata, statuses, and evidence *paths*. No tokens, no
   environment values, no raw transcripts, no bulky command output.

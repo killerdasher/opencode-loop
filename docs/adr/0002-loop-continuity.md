@@ -112,9 +112,12 @@ anything is modified.
 ### 5. Privacy and local persistence
 
 - `.loop/` stays in the consumer project and is **excluded from Git by
-  default — by documentation and explicit instruction, never by silently
-  editing the project's shared `.gitignore`** (the skill instructs the agent
-  to announce the missing ignore entry and ask / show the line).
+  default — deterministically at helper `init`, which appends an anchored
+  `/.loop/` entry to the project's local `.git/info/exclude`** (a per-clone
+  file that is never committed or pushed; the shared `.gitignore` is never
+  edited; non-git projects skip the step and the init result reports the
+  outcome — remediation pass 2026-11-18; previously documented as
+  "by instruction" with no instruction or mechanism existing).
 - The state file stores: objective text, requirements labels, stage/iteration
   metadata, statuses, evidence *paths*, and reconciliation descriptors. It
   stores **no tokens, environment values, raw transcripts, or unnecessary
@@ -227,7 +230,7 @@ helper-unavailable → `BLOCKED` with exact reason; states and archives are
 
 ```
 <project>/
-├── .loop/                        # continuity tier (consumer project; git-excluded by instruction)
+├── .loop/                        # continuity tier (consumer project; locally git-excluded at init via .git/info/exclude)
 │   ├── continuity.json           # the live run state (schema v1)
 │   └── archive/<taskId>.json     # terminal runs, retained
 └── .opencode/                    # installed by installers
@@ -305,7 +308,7 @@ opencode-loop repo/
 - Helper + unit + mutation surface: 32 real-module checks, 9 continuity mutations, ~25 command/docs checks — each new contract clause below gets a check + mutation.
 - Dual installers must keep the helper copy lines in sync (marker-checked in both).
 - Verbatim-doc enforcement (`docs:continuity-table/limits`) means doc rewording near §7 trips the validator by design.
-- Archives grow unpruned (manual owner decision); `.loop/` files are never in CI (git-excluded by instruction).
+- Archives grow unpruned (manual owner decision); `.loop/` files are never in CI (locally git-excluded at init via `.git/info/exclude`).
 
 ## Consequences
 

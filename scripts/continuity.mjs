@@ -7,9 +7,14 @@
  *   An optional, zero-external-dependency Node (>=16.7) helper. It provides:
  *     - state-file schema validation (versioned schema, allowlisted fields)
  *     - transition validation against the documented lifecycle table
+ *       (lifecycle fields - status, stopReason, stoppingCondition, integrity -
+ *       change ONLY through transitions; a generic update can never bypass or
+ *       mask them)
  *     - project identity verification (with sanitized remote-URL fingerprints)
  *     - atomic persistence (temp file + rename, recoverable left-behind temps)
  *     - best-effort secret-shape scanning of everything it persists
+ *     - init-time local git exclusion of `.loop/` (`.git/info/exclude`; the
+ *       shared `.gitignore` is never modified)
  *
  * WHAT THIS IS NOT
  *   It is not a plugin, daemon, server, database, or resident runtime. It has
@@ -101,6 +106,21 @@ export const ROOT_EVENTS = Object.freeze(['init']);
 
 /** Where reasons recorded at cancel/complete/completion are kept. */
 export const STOP_REASON_FIELD = 'stopReason';
+
+/**
+ * Lifecycle-managed fields (remediation pass 2026-11-18). These record WHO the
+ * lifecycle is and WHETHER its record can be trusted, so they change only
+ * through `opTransition`, which enforces the documented transition table,
+ * records reasons, and archives terminal states. `opUpdate` refuses them: a
+ * generic update must never be able to fake a terminal status, resurrect a
+ * cancelled run, or mask a stale/corrupt verdict.
+ */
+export const LIFECYCLE_FIELDS = Object.freeze([
+  'status',
+  'stopReason',
+  'stoppingCondition',
+  'integrity',
+]);
 
 // ---------------------------------------------------------------------------
 // Secret-shape scanning (best-effort; see header - never "complete")
@@ -549,7 +569,12 @@ export function opInitialize(projectRoot, draft) {
     state.project.originFingerprint = fp.originFingerprint;
   }
   const written = persistState(projectRoot, state);
-  return written.ok ? { ok: true, state: written.state, file: liveFile } : written;
+  if (!written.ok) return written;
+  // Local git exclusion of the runtime state dir is part of init (remediation
+  // pass): `.loop/` lands in .git/info/exclude - never the shared .gitignore -
+  // and the outcome is reported, never silent.
+  const gitExclude = ensureLoopGitExclusion(projectRoot);
+  return { ok: true, state: written.state, file: liveFile, gitExclude };
 }
 
 /**
@@ -597,9 +622,15 @@ export function opTransition(projectRoot, event, {
       flaggedAt: now,
       integrity: 'SUSPECTED_STALE',
     };
+    // The integrity verdict is lifecycle-managed (remediation pass): flagging
+    // recovery marks the FILE suspect at top level too, so every reader -
+    // inspect, /loop-status, /loop-resume gate 1/4 - sees the same verdict
+    // without a generic update ever having been able to set it.
+    next.integrity = 'SUSPECTED_STALE';
   }
   if (event === 'resolve-recovery') {
     next.recovery = { ...(state.recovery || {}), resolvedAt: now };
+    next.integrity = 'VALID';
   }
   next.generation = state.generation + 1;
   const persist = persistState(projectRoot, next);
@@ -619,15 +650,78 @@ export function opTransition(projectRoot, event, {
   return { ok: true, state: updated };
 }
 
-/** Merge operator-managed fields (stage/iteration/ledger) into a VALID state. */
+/**
+ * Fields a generic update may set. Everything else - notably every
+ * LIFECYCLE_FIELDS entry - is refused: lifecycle state changes only through
+ * opTransition's validated table.
+ */
+export const UPDATEABLE_FIELDS = Object.freeze([
+  'stage',
+  'iteration',
+  'maxIterations',
+  'mode',
+  'iterations',
+  'requirements',
+  'settings',
+]);
+
+/**
+ * Merge operator-managed fields (stage/iteration/ledger) into a VALID state.
+ * Same mutation gates as opTransition: refuses a CORRUPT/unsupported file
+ * (readStatus !== 'ok'), a state that belongs to a different project, and a
+ * SUSPECTED_STALE state (reconciliation is read-only first; resolve-recovery
+ * clears the flag). Lifecycle fields in the patch are refused, never silently
+ * dropped, so a caller cannot believe a status change was applied.
+ */
 export function opUpdate(projectRoot, patch, { expectedRoot } = {}) {
   const identityRoot = expectedRoot === undefined ? projectRoot : expectedRoot;
   const inspect = inspectState(projectRoot, { expectedRoot: identityRoot });
   if (inspect.readStatus !== 'ok') {
     return { ok: false, blocked: inspect.readStatus !== 'missing', readStatus: inspect.readStatus, errors: inspect.errors };
   }
+  if (inspect.identity === 'mismatch') {
+    return {
+      ok: false,
+      reason: `project identity mismatch: state belongs to "${inspect.state.project.root}"`,
+      blocked: false,
+    };
+  }
+  // A patch must be a JSON object with at least one field: `null` (valid JSON
+  // the CLI happily parses), strings, and arrays are refused with the usage
+  // error instead of crashing (null) or no-opping with a full rewrite
+  // (string/array) - fresh-review finding F4, remediation pass 2026-11-18.
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return {
+      ok: false,
+      reason: 'patch must be a JSON object with at least one updateable field (stage, iteration, maxIterations, mode, iterations, requirements, settings)',
+      blocked: false,
+    };
+  }
+  const lifecycleTouched = Object.keys(patch).filter((k) => LIFECYCLE_FIELDS.includes(k));
+  if (lifecycleTouched.length > 0) {
+    return {
+      ok: false,
+      reason: `lifecycle fields are transition-managed and cannot be set by a generic update: ${lifecycleTouched.join(', ')} (use transition --event)`,
+      blocked: false,
+      lifecycleFields: lifecycleTouched,
+    };
+  }
+  if (Object.keys(patch).length === 0) {
+    return {
+      ok: false,
+      reason: 'patch must be a JSON object with at least one updateable field (stage, iteration, maxIterations, mode, iterations, requirements, settings)',
+      blocked: false,
+    };
+  }
+  if (inspect.integrity === 'SUSPECTED_STALE') {
+    return {
+      ok: false,
+      reason: 'integrity is SUSPECTED_STALE; reconcile read-only first (see /loop-resume gate 4) and resolve-recovery to clear',
+      blocked: false,
+    };
+  }
   const allowlisted = {};
-  for (const key of ['stage', 'iteration', 'maxIterations', 'mode', 'status', 'integrity', 'iterations', 'requirements', 'stoppingCondition', 'stopReason', 'settings']) {
+  for (const key of UPDATEABLE_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(patch, key)) allowlisted[key] = patch[key];
   }
   const merged = { ...inspect.state, ...allowlisted };
@@ -635,6 +729,44 @@ export function opUpdate(projectRoot, patch, { expectedRoot } = {}) {
   if (!v.ok) return { ok: false, reason: 'patch produces an invalid state', errors: v.errors };
   const persist = persistState(projectRoot, { ...merged, generation: inspect.state.generation + 1 });
   return persist.ok ? { ok: true, state: persist.state } : persist;
+}
+
+/**
+ * Ensure `<project>/.loop/` is locally git-excluded (remediation pass).
+ * Writes to `<project>/.git/info/exclude` - a local, never-committed,
+ * never-pushed file - and NEVER touches the shared `.gitignore`. Best-effort
+ * and honest about doing nothing: skipped when the project is not a plain git
+ * work tree (`.git` missing or a worktree link file) or `.loop/` is already
+ * listed. Callers report the outcome, so the exclusion is not silent.
+ */
+export function ensureLoopGitExclusion(projectRoot) {
+  const gitDir = path.join(projectRoot, '.git');
+  let isDir = false;
+  try {
+    isDir = fs.statSync(gitDir).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) return { done: false, reason: 'not a plain git work tree (.git directory not found); nothing excluded' };
+  const excludePath = path.join(gitDir, 'info', 'exclude');
+  let content = '';
+  try {
+    content = fs.readFileSync(excludePath, 'utf8');
+  } catch (err) {
+    if ((err && err.code) !== 'ENOENT') return { done: false, reason: `cannot read .git/info/exclude: ${String(err)}` };
+  }
+  const lines = content.split(/\r?\n/).map((l) => l.trim());
+  // matches both the anchored (/.loop/) and unanchored (.loop/) spellings, so
+  // an existing hand-written entry is honored and never duplicated
+  if (lines.includes('/.loop/') || lines.includes('.loop/')) return { done: false, reason: 'already excluded' };
+  try {
+    fs.mkdirSync(path.join(gitDir, 'info'), { recursive: true });
+    const prefix = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+    fs.appendFileSync(excludePath, `${prefix}# LOOP continuity runtime state (local exclusion; the shared .gitignore is untouched)\n/.loop/\n`, 'utf8');
+  } catch (err) {
+    return { done: false, reason: `cannot write .git/info/exclude: ${String(err)}` };
+  }
+  return { done: true, path: excludePath, entry: '/.loop/' };
 }
 
 // ---------------------------------------------------------------------------
@@ -653,7 +785,10 @@ function helpText() {
     '  transition <r> --event EVENT [--reason TEXT] [--stopping-condition TEXT]',
     '        [--origin-url U]             pause|resume|block|unblock|recovery-flag|',
     '                                     resolve-recovery|cancel|complete',
-    '  update <r> --patch-json J          merge operator fields into the live state',
+    '  update <r> --patch-json J          merge operator fields (stage/iteration/ledger)',
+    '        into the live state; lifecycle fields (status, stopReason,',
+    '        stoppingCondition, integrity) are refused - they change only',
+    '        via transition --event',
     '  repair <r>                         delete provably superseded leftover temps',
     '  help                               this text',
     '',
