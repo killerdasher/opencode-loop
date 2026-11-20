@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Doc-accuracy completion (fresh-review finding)**: `docs/adr/0002-loop-continuity.md` §5 still carried the "excluded from Git by documentation and explicit instruction... the skill instructs the agent to announce the missing ignore entry" claim — the fifth and last "by instruction" claim site, which the first doc sweep missed. Now describes the actual init-time `.git/info/exclude` mechanism.
 - **Malformed `update` patches refused (`scripts/continuity.mjs`)**: `--patch-json null` (valid JSON the CLI parsed, then crashed with an unhandled `TypeError`), string, array, and empty-object patches are now refused with an explicit usage error and zero state writes — found by the fresh-context adversarial review (pre-existing crash in the exact function this pass touched; regression-pinned).
+- **Validator link-check parity with CI (`scripts/validate.mjs`)**: the relative-link check walked untracked local runtime state, so a local run counted `.loop/reviews/*.md` (251 checks locally) while CI on the committed tree counted 250 — local/CI drift carrying no repository signal. The link-check now skips `.loop/` paths (the secret scan still walks them — local-strict on secret shapes is a safety feature, not parity noise), pinned by a new content check (`links:loop-state-skipped`) plus a defect-injection mutation; local and CI check counts now match.
 
 ### Added
 

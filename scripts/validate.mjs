@@ -381,6 +381,12 @@ function validateRepo(root) {
 
   // -- Relative markdown links (case-exact) ----------------------------------
   for (const file of walkFiles(root).filter((f) => f.endsWith('.md'))) {
+    const rel = path.relative(root, file).split(path.sep).join('/');
+    // .loop/ is local runtime state (git-excluded, never present in CI):
+    // link-checking untracked .loop/ markdown made local counts drift from
+    // CI (the local-251-vs-CI-250 parity defect). The secret scan still
+    // walks .loop/ - local-strict on secret shapes is safety, not noise.
+    if (rel.startsWith('.loop/')) continue;
     const text = readIfExists(file);
     if (text === null) continue;
     const broken = [];
@@ -388,9 +394,20 @@ function validateRepo(root) {
       const resolved = path.resolve(path.dirname(file), target);
       if (!existsExactCase(resolved, root)) broken.push(target);
     }
-    const rel = path.relative(root, file).split(path.sep).join('/');
     push(`links:${rel}`, broken.length === 0, broken.length === 0 ? 'all local links resolve' : `broken: ${broken.join(', ')}`);
   }
+
+  // The .loop/ skip above is a local/CI parity contract, pinned to this
+  // source so a silent removal re-introduces the drift and fails this check.
+  // Count-based (>= 2) rather than a plain includes(): a single-occurrence
+  // pin would be satisfied by its own source string and could never fail
+  // when only the skip line is removed - the pin contributes exactly one
+  // occurrence, the real skip statement the other (mutation-proven below).
+  const vsrc = readIfExists(path.join(root, 'scripts', 'validate.mjs'));
+  const skipStatement = "if (rel.startsWith('.loop/')) continue;";
+  const skipCount = vsrc === null ? 0 : vsrc.split(skipStatement).length - 1;
+  const loopSkipped = skipCount >= 2;
+  push('links:loop-state-skipped', loopSkipped, loopSkipped ? '.loop/ runtime state skipped by the link-check (local/CI parity)' : `link-check skip statement found ${skipCount}x (need 2: the pin plus the real skip) - local counts will drift from CI`);
 
   // -- Installers ------------------------------------------------------------
   const ps1 = readIfExists(path.join(root, 'scripts/install.ps1'));
@@ -1051,6 +1068,19 @@ function runSelfTest(root) {
       expect: 'links:README.md',
       file: 'README.md',
       apply: (t) => t.split('docs/architecture.md').join('docs/does-not-exist.md'),
+    },
+    // -- local/CI parity mutation --------------------------------------------
+    {
+      id: 'link check stops skipping local .loop/ state',
+      expect: 'links:loop-state-skipped',
+      file: 'scripts/validate.mjs',
+      // Remove only the indented skip statement in the link loop. The needle
+      // is built by concatenation so this entry does NOT contain the
+      // contiguous statement text (the >=2 pin counts: the real skip line +
+      // its own literal - and nothing else; a third in-source occurrence
+      // would let the pin survive its own mutation). At runtime the halves
+      // join into the exact line to delete.
+      apply: (t) => t.split("\n    if (rel.startsWith('.loop" + "/')) continue;").join(''),
     },
     {
       id: 'fake secret injected',
